@@ -1,0 +1,2068 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EKS Upgrade Plan &mdash; kwg-nonprod (1.34 &rarr; 1.36)</title>
+<meta name="description" content="Implementation plan and execution runbook for upgrading the kwg-nonprod Amazon EKS cluster from Kubernetes 1.34 to 1.36 in us-east-2.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="EKS Upgrade Plan — kwg-nonprod (1.34 → 1.36)">
+<meta property="og:description" content="Implementation plan and execution runbook for upgrading the kwg-nonprod Amazon EKS cluster from Kubernetes 1.34 to 1.36.">
+<meta property="og:type" content="article">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='20'%20fill='%23ff9900'/%3E%3Ctext%20y='72'%20x='50'%20font-size='62'%20text-anchor='middle'%20font-family='sans-serif'%20font-weight='bold'%20fill='%23232f3e'%3EK%3C/text%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#ffffff; --bg-alt:#f6f8fa; --bg-sunk:#eef1f4;
+  --fg:#1f2328; --fg-mut:#59636e; --fg-faint:#848d97;
+  --border:#d8dee4; --border-soft:#e8ecf0;
+  --accent:#0969da; --accent-soft:#ddf4ff;
+  --orange:#ff9900; --navy:#232f3e;
+  --code-bg:#1b1f24; --code-fg:#e6edf3; --code-comment:#8b98a5;
+  --ok:#1a7f37; --ok-bg:#dafbe1;
+  --warn:#9a6700; --warn-bg:#fff8c5;
+  --danger:#cf222e; --danger-bg:#ffebe9;
+  --tip:#8250df; --tip-bg:#fbefff;
+  --info:#0969da; --info-bg:#ddf4ff;
+  --shadow:0 1px 3px rgba(31,35,40,.12),0 8px 24px rgba(31,35,40,.08);
+  --sidebar-w:300px; --topbar-h:56px;
+}
+[data-theme="dark"]{
+  --bg:#0d1117; --bg-alt:#161b22; --bg-sunk:#010409;
+  --fg:#e6edf3; --fg-mut:#9198a1; --fg-faint:#6e7681;
+  --border:#30363d; --border-soft:#21262d;
+  --accent:#4493f8; --accent-soft:#121d2f;
+  --code-bg:#161b22; --code-fg:#e6edf3; --code-comment:#8b949e;
+  --ok:#3fb950; --ok-bg:#0f2417;
+  --warn:#d29922; --warn-bg:#2b2412;
+  --danger:#f85149; --danger-bg:#2d1314;
+  --tip:#a371f7; --tip-bg:#21182f;
+  --info:#4493f8; --info-bg:#121d2f;
+  --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.3);
+}
+html{scroll-behavior:smooth;scroll-padding-top:calc(var(--topbar-h) + 16px)}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---------- progress ---------- */
+#progress{position:fixed;top:0;left:0;height:3px;width:0;background:linear-gradient(90deg,var(--orange),#f90);z-index:60;transition:width .1s linear}
+
+/* ---------- topbar ---------- */
+.topbar{
+  position:sticky;top:0;z-index:50;height:var(--topbar-h);
+  display:flex;align-items:center;gap:12px;padding:0 16px;
+  background:var(--navy);color:#fff;border-bottom:1px solid rgba(255,255,255,.08)
+}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px;white-space:nowrap}
+.brand .logo{width:26px;height:26px;border-radius:7px;background:var(--orange);color:var(--navy);display:grid;place-items:center;font-weight:800;font-size:15px;flex:none}
+.brand small{display:block;font-weight:400;font-size:11px;color:#b9c2cf;line-height:1}
+.spacer{flex:1}
+.tbtn{
+  appearance:none;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);
+  color:#fff;border-radius:7px;padding:6px 11px;font-size:13px;cursor:pointer;line-height:1.4;
+  display:inline-flex;align-items:center;gap:6px
+}
+.tbtn:hover{background:rgba(255,255,255,.14)}
+#navToggle{display:none}
+
+/* ---------- layout ---------- */
+.layout{display:grid;grid-template-columns:var(--sidebar-w) minmax(0,1fr);align-items:start;max-width:1500px;margin:0 auto}
+.sidebar{
+  position:sticky;top:var(--topbar-h);height:calc(100vh - var(--topbar-h));
+  overflow-y:auto;padding:18px 10px 40px 18px;border-right:1px solid var(--border-soft);
+  background:var(--bg)
+}
+.search{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:8px;background:var(--bg-alt);color:var(--fg);font-size:13.5px;margin-bottom:12px}
+.search:focus{outline:2px solid var(--accent);outline-offset:-1px;background:var(--bg)}
+.toc-title{font-size:11px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:var(--fg-faint);margin:0 0 8px 6px}
+.toc-link{
+  display:block;padding:5px 10px;margin:1px 0;border-radius:6px;font-size:13.5px;
+  color:var(--fg-mut);border-left:2px solid transparent;line-height:1.4
+}
+.toc-link:hover{background:var(--bg-alt);color:var(--fg);text-decoration:none}
+.toc-link.lvl3{padding-left:24px;font-size:12.8px;color:var(--fg-faint)}
+.toc-link.active{color:var(--accent);background:var(--accent-soft);border-left-color:var(--accent);font-weight:600}
+.toc-link.hidden{display:none}
+
+.main{min-width:0;padding:30px 44px 120px}
+.content{max-width:880px}
+
+/* ---------- hero ---------- */
+.hero{border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-bottom:28px;background:var(--bg-alt);box-shadow:var(--shadow)}
+.hero h1{margin:0 0 4px;font-size:27px;line-height:1.25;letter-spacing:-.3px;border:0;padding:0}
+.hero .sub{color:var(--fg-mut);font-size:14.5px;margin-bottom:16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+.chip{display:flex;flex-direction:column;gap:1px;background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:7px 12px;min-width:112px}
+.chip-k{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--fg-faint);font-weight:700}
+.chip-v{font-size:13.5px;font-weight:600}
+.pathbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:var(--bg);border:1px dashed var(--border);border-radius:9px;padding:10px 13px;font-size:13.5px}
+.pathbar b{color:var(--orange)}
+
+/* ---------- typography ---------- */
+.content h2{
+  font-size:22px;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border);
+  letter-spacing:-.2px;scroll-margin-top:calc(var(--topbar-h) + 14px)
+}
+.content h3{font-size:17.5px;margin:30px 0 10px;scroll-margin-top:calc(var(--topbar-h) + 14px)}
+.content h4{font-size:15px;margin:22px 0 8px;color:var(--fg-mut)}
+.content p{margin:0 0 14px}
+.content ul,.content ol{margin:0 0 14px;padding-left:24px}
+.content li{margin:5px 0}
+.content li>ul,.content li>ol{margin:5px 0}
+.content hr{border:0;border-top:1px solid var(--border-soft);margin:36px 0}
+.content strong{font-weight:650}
+.anchored{position:relative}
+.anchor{position:absolute;left:-20px;color:var(--fg-faint);opacity:0;font-weight:400;text-decoration:none}
+.anchored:hover .anchor{opacity:1}
+
+/* inline code */
+.content :not(pre)>code{
+  background:var(--bg-sunk);border:1px solid var(--border-soft);border-radius:5px;
+  padding:.12em .38em;font-size:.875em;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  word-break:break-word
+}
+
+/* ---------- code blocks ---------- */
+.codeblock{position:relative;margin:0 0 18px;border-radius:10px;overflow:hidden;border:1px solid var(--border);background:var(--code-bg)}
+.codeblock::before{
+  content:attr(data-lang);position:absolute;top:8px;left:14px;font-size:10.5px;letter-spacing:.9px;
+  text-transform:uppercase;color:var(--code-comment);font-family:ui-monospace,monospace;pointer-events:none
+}
+.codeblock pre{margin:0;padding:34px 14px 14px;overflow-x:auto}
+.codeblock code{
+  font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  font-size:13px;line-height:1.6;color:var(--code-fg);white-space:pre
+}
+.codeblock .c{color:var(--code-comment);font-style:italic}
+.copy{
+  position:absolute;top:6px;right:8px;z-index:2;appearance:none;cursor:pointer;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);color:#c9d1d9;
+  border-radius:6px;padding:3px 9px;font-size:11.5px;opacity:0;transition:opacity .15s
+}
+.codeblock:hover .copy,.copy:focus{opacity:1}
+.copy:hover{background:rgba(255,255,255,.16)}
+.copy.done{background:var(--ok);border-color:var(--ok);color:#fff;opacity:1}
+
+/* ---------- tables ---------- */
+.tablewrap{overflow-x:auto;margin:0 0 18px;border:1px solid var(--border);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13.8px}
+thead th{
+  background:var(--bg-alt);text-align:left;font-weight:650;padding:10px 13px;
+  border-bottom:1px solid var(--border);white-space:nowrap;color:var(--fg)
+}
+tbody td{padding:9px 13px;border-bottom:1px solid var(--border-soft);vertical-align:top;line-height:1.55}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover{background:var(--bg-alt)}
+td:empty::after{content:"\2014";color:var(--fg-faint)}
+
+.sev{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.sev-critical{background:var(--danger-bg);color:var(--danger);border:1px solid var(--danger)}
+.sev-high{background:var(--danger-bg);color:var(--danger)}
+.sev-medhigh{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn)}
+.sev-med{background:var(--warn-bg);color:var(--warn)}
+.sev-low{background:var(--ok-bg);color:var(--ok)}
+.pill{display:inline-block;padding:1px 9px;border-radius:999px;font-size:11.5px;font-weight:700}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.no{background:var(--danger-bg);color:var(--danger)}
+
+.gate-check{width:17px;height:17px;cursor:pointer;accent-color:var(--ok);vertical-align:middle}
+.boxglyph{font-size:1.05em;color:var(--fg-mut)}
+
+/* ---------- callouts ---------- */
+.callout{margin:0 0 18px;padding:13px 16px 13px 15px;border-radius:0 10px 10px 0;border-left:4px solid var(--fg-faint);background:var(--bg-alt)}
+.callout>:last-child{margin-bottom:0}
+.callout-label{font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px}
+.callout.danger{border-left-color:var(--danger);background:var(--danger-bg)}
+.callout.danger .callout-label{color:var(--danger)}
+.callout.warn{border-left-color:var(--warn);background:var(--warn-bg)}
+.callout.warn .callout-label{color:var(--warn)}
+.callout.tip{border-left-color:var(--tip);background:var(--tip-bg)}
+.callout.tip .callout-label{color:var(--tip)}
+.callout.info,.callout.note{border-left-color:var(--info);background:var(--info-bg)}
+.callout.info .callout-label,.callout.note .callout-label{color:var(--info)}
+.callout .codeblock{margin-top:10px}
+
+/* ---------- gate counter ---------- */
+.gatebar{
+  position:fixed;right:18px;bottom:18px;z-index:40;background:var(--bg);border:1px solid var(--border);
+  border-radius:10px;box-shadow:var(--shadow);padding:9px 13px;font-size:12.5px;display:none;align-items:center;gap:10px
+}
+.gatebar.show{display:flex}
+.gatebar b{color:var(--ok)}
+.gatebar button{appearance:none;background:none;border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:11.5px;cursor:pointer;color:var(--fg-mut)}
+.gatebar button:hover{background:var(--bg-alt)}
+
+footer.site{border-top:1px solid var(--border-soft);margin-top:50px;padding-top:18px;color:var(--fg-faint);font-size:12.5px}
+
+/* ---------- responsive ---------- */
+@media (max-width:1100px){ .main{padding:26px 28px 100px} }
+@media (max-width:900px){
+  #navToggle{display:inline-flex}
+  .layout{grid-template-columns:1fr}
+  .sidebar{
+    position:fixed;top:var(--topbar-h);left:0;width:85%;max-width:330px;z-index:45;
+    transform:translateX(-102%);transition:transform .22s ease;box-shadow:var(--shadow);
+    border-right:1px solid var(--border)
+  }
+  .sidebar.open{transform:translateX(0)}
+  .main{padding:20px 18px 90px}
+  .brand small{display:none}
+  .hero{padding:18px}
+  .hero h1{font-size:22px}
+  .scrim{position:fixed;inset:var(--topbar-h) 0 0;background:rgba(0,0,0,.45);z-index:44;display:none}
+  .scrim.show{display:block}
+}
+
+/* ---------- print ---------- */
+@media print{
+  .topbar,.sidebar,.gatebar,#progress,.copy,.scrim,.anchor{display:none!important}
+  .layout{grid-template-columns:1fr;max-width:none}
+  .main{padding:0}
+  .content{max-width:none}
+  body{font-size:10.5pt;background:#fff;color:#000}
+  .codeblock{background:#f6f8fa;border:1px solid #ccc}
+  .codeblock code{color:#111}
+  .codeblock .c{color:#555}
+  .content h2{page-break-after:avoid;break-after:avoid}
+  .tablewrap,.codeblock,.callout{page-break-inside:avoid;break-inside:avoid}
+  a{color:#000;text-decoration:underline}
+}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="tbtn" id="navToggle" type="button" aria-label="Toggle navigation">&#9776;</button>
+  <div class="brand">
+    <span class="logo">K</span>
+    <span>kwg-nonprod<small>EKS Upgrade Runbook</small></span>
+  </div>
+  <div class="spacer"></div>
+  <button class="tbtn" id="themeBtn" type="button" title="Toggle dark mode">&#9680; <span>Theme</span></button>
+  <button class="tbtn" id="printBtn" type="button" title="Print or save as PDF">&#128424; <span>PDF</span></button>
+  <a class="tbtn" href="EKS-Upgrade-Implementation-Plan-kwg-nonprod.md" download title="Download the Markdown source">&#8681; <span>MD</span></a>
+</header>
+
+<div class="scrim" id="scrim"></div>
+
+<div class="layout">
+  <nav class="sidebar" id="sidebar">
+    <input class="search" id="search" type="search" placeholder="Filter sections&hellip;" aria-label="Filter sections">
+    <p class="toc-title">Contents</p>
+    <a class="toc-link lvl2" href="#1-executive-summary" data-target="1-executive-summary">1. Executive Summary</a>
+<a class="toc-link lvl2" href="#2-scope" data-target="2-scope">2. Scope</a>
+<a class="toc-link lvl3" href="#21-in-scope" data-target="21-in-scope">2.1 In Scope</a>
+<a class="toc-link lvl3" href="#22-out-of-scope" data-target="22-out-of-scope">2.2 Out of Scope</a>
+<a class="toc-link lvl3" href="#23-assumptions-confirm-during-phase-1" data-target="23-assumptions-confirm-during-phase-1">2.3 Assumptions (confirm during Phase 1)</a>
+<a class="toc-link lvl2" href="#3-architecture-context-upgrade-impact-analysis" data-target="3-architecture-context-upgrade-impact-analysis">3. Architecture Context &amp;amp; Upgrade Impact Analysis</a>
+<a class="toc-link lvl3" href="#31-traffic-path" data-target="31-traffic-path">3.1 Traffic Path</a>
+<a class="toc-link lvl3" href="#32-where-the-upgrade-actually-hurts" data-target="32-where-the-upgrade-actually-hurts">3.2 Where the Upgrade Actually Hurts</a>
+<a class="toc-link lvl2" href="#4-risk-register" data-target="4-risk-register">4. Risk Register</a>
+<a class="toc-link lvl2" href="#5-phase-1-discovery-assessment-t14-to-t10-days" data-target="5-phase-1-discovery-assessment-t14-to-t10-days">5. Phase 1 — Discovery &amp;amp; Assessment  (T−14 to T−10 days)</a>
+<a class="toc-link lvl3" href="#51-baseline-capture-gate-artifacts-store-in-the-change-ticket" data-target="51-baseline-capture-gate-artifacts-store-in-the-change-ticket">5.1 Baseline Capture (gate artifacts — store in the change ticket)</a>
+<a class="toc-link lvl3" href="#52-deprecated-removed-api-scan-mandatory-blocking" data-target="52-deprecated-removed-api-scan-mandatory-blocking">5.2 Deprecated / Removed API Scan — mandatory, blocking</a>
+<a class="toc-link lvl3" href="#53-add-on-compatibility-matrix" data-target="53-add-on-compatibility-matrix">5.3 Add-on Compatibility Matrix</a>
+<a class="toc-link lvl3" href="#54-workload-resilience-audit-the-45-microservices" data-target="54-workload-resilience-audit-the-45-microservices">5.4 Workload Resilience Audit (the 45 microservices)</a>
+<a class="toc-link lvl3" href="#55-capacity-networking-pre-checks" data-target="55-capacity-networking-pre-checks">5.5 Capacity &amp;amp; Networking Pre-checks</a>
+<a class="toc-link lvl3" href="#56-ingress-nlb-identity-capture-gate-artifact" data-target="56-ingress-nlb-identity-capture-gate-artifact">5.6 Ingress &amp;amp; NLB Identity Capture — gate artifact</a>
+<a class="toc-link lvl3" href="#57-nginx-helm-release-capture-blocking-gate-r-14-r-15-r-16" data-target="57-nginx-helm-release-capture-blocking-gate-r-14-r-15-r-16">5.7 nginx Helm Release Capture — blocking gate (R-14, R-15, R-16)</a>
+<a class="toc-link lvl2" href="#6-phase-2-remediation-preparation-t10-to-t3-days" data-target="6-phase-2-remediation-preparation-t10-to-t3-days">6. Phase 2 — Remediation &amp;amp; Preparation  (T−10 to T−3 days)</a>
+<a class="toc-link lvl3" href="#61-backup-strategy" data-target="61-backup-strategy">6.1 Backup Strategy</a>
+<a class="toc-link lvl2" href="#7-phase-3-rehearsal-t7-days-strongly-recommended" data-target="7-phase-3-rehearsal-t7-days-strongly-recommended">7. Phase 3 — Rehearsal  (T−7 days, strongly recommended)</a>
+<a class="toc-link lvl2" href="#8-phase-4-execution-runbook" data-target="8-phase-4-execution-runbook">8. Phase 4 — Execution Runbook</a>
+<a class="toc-link lvl3" href="#80-pre-window-gono-go-checklist" data-target="80-pre-window-gono-go-checklist">8.0 Pre-Window Go/No-Go Checklist</a>
+<a class="toc-link lvl3" href="#step-1-freeze-baseline-t0-20-min" data-target="step-1-freeze-baseline-t0-20-min">Step 1 — Freeze &amp;amp; Baseline  (T+0, ~20 min)</a>
+<a class="toc-link lvl3" href="#step-2-control-plane-upgrade-2545-min-aws-managed" data-target="step-2-control-plane-upgrade-2545-min-aws-managed">Step 2 — Control Plane Upgrade  (~25–45 min, AWS-managed)</a>
+<a class="toc-link lvl3" href="#step-3-core-add-ons-1525-min" data-target="step-3-core-add-ons-1525-min">Step 3 — Core Add-ons  (~15–25 min)</a>
+<a class="toc-link lvl3" href="#step-4-data-plane-bottlerocket-managed-node-groups-longest-step-1020-min-per-node" data-target="step-4-data-plane-bottlerocket-managed-node-groups-longest-step-1020-min-per-node">Step 4 — Data Plane: Bottlerocket Managed Node Groups  (longest step — ~10–20 min per node)</a>
+<a class="toc-link lvl3" href="#step-5-unfreeze-reconcile-argo-cd-20-min" data-target="step-5-unfreeze-reconcile-argo-cd-20-min">Step 5 — Unfreeze &amp;amp; Reconcile Argo CD  (~20 min)</a>
+<a class="toc-link lvl2" href="#9-phase-5-validation" data-target="9-phase-5-validation">9. Phase 5 — Validation</a>
+<a class="toc-link lvl3" href="#91-platform-validation" data-target="91-platform-validation">9.1 Platform Validation</a>
+<a class="toc-link lvl3" href="#92-ingress-traffic-path-validation-the-critical-gate-r-03" data-target="92-ingress-traffic-path-validation-the-critical-gate-r-03">9.2 Ingress / Traffic-Path Validation — the critical gate (R-03)</a>
+<a class="toc-link lvl3" href="#93-application-validation-45-microservices" data-target="93-application-validation-45-microservices">9.3 Application Validation (45 microservices)</a>
+<a class="toc-link lvl3" href="#94-observability-logging-validation" data-target="94-observability-logging-validation">9.4 Observability &amp;amp; Logging Validation</a>
+<a class="toc-link lvl3" href="#95-soak-period" data-target="95-soak-period">9.5 Soak Period</a>
+<a class="toc-link lvl2" href="#10-rollback-contingency" data-target="10-rollback-contingency">10. Rollback &amp;amp; Contingency</a>
+<a class="toc-link lvl3" href="#101-rollback-capability-by-layer" data-target="101-rollback-capability-by-layer">10.1 Rollback Capability by Layer</a>
+<a class="toc-link lvl3" href="#102-decision-tree" data-target="102-decision-tree">10.2 Decision Tree</a>
+<a class="toc-link lvl3" href="#103-catastrophic-contingency-control-plane-healthy-but-cluster-unusable" data-target="103-catastrophic-contingency-control-plane-healthy-but-cluster-unusable">10.3 Catastrophic Contingency (control plane healthy but cluster unusable)</a>
+<a class="toc-link lvl3" href="#104-ingress-down-emergency-r-03-r-04-r-14" data-target="104-ingress-down-emergency-r-03-r-04-r-14">10.4 Ingress-Down Emergency (R-03 / R-04 / R-14)</a>
+<a class="toc-link lvl2" href="#11-timeline-resourcing" data-target="11-timeline-resourcing">11. Timeline &amp;amp; Resourcing</a>
+<a class="toc-link lvl3" href="#111-indicative-schedule" data-target="111-indicative-schedule">11.1 Indicative Schedule</a>
+<a class="toc-link lvl3" href="#112-per-hop-window-breakdown" data-target="112-per-hop-window-breakdown">11.2 Per-Hop Window Breakdown</a>
+<a class="toc-link lvl3" href="#113-roles" data-target="113-roles">11.3 Roles</a>
+<a class="toc-link lvl3" href="#114-communications" data-target="114-communications">11.4 Communications</a>
+<a class="toc-link lvl2" href="#12-post-upgrade-activities" data-target="12-post-upgrade-activities">12. Post-Upgrade Activities</a>
+<a class="toc-link lvl3" href="#121-learnings-log-template" data-target="121-learnings-log-template">12.1 Learnings Log Template</a>
+<a class="toc-link lvl2" href="#13-key-decisions-requiring-sign-off" data-target="13-key-decisions-requiring-sign-off">13. Key Decisions Requiring Sign-Off</a>
+<a class="toc-link lvl2" href="#14-references-to-consult-at-execution-time" data-target="14-references-to-consult-at-execution-time">14. References to Consult at Execution Time</a>
+  </nav>
+
+  <main class="main">
+    <div class="content">
+      <section class="hero">
+        <h1>Amazon EKS Cluster Upgrade &mdash; Implementation Plan</h1>
+        <div class="sub">Non-Production &middot; <code>kwg-nonprod</code> &middot; US East (Ohio)</div>
+        <div class="chips"><div class="chip"><span class="chip-k">Cluster</span><span class="chip-v">kwg-nonprod</span></div><div class="chip"><span class="chip-k">Region</span><span class="chip-v">us-east-2 (Ohio)</span></div><div class="chip"><span class="chip-k">Current</span><span class="chip-v">1.34</span></div><div class="chip"><span class="chip-k">Target</span><span class="chip-v">1.36</span></div><div class="chip"><span class="chip-k">Nodes</span><span class="chip-v">Bottlerocket x86_64 (MNG)</span></div></div>
+        <div class="pathbar"><b>Upgrade path</b> 1.34 → 1.35 → 1.36 (two sequential hops — EKS does not permit skipping minor versions)</div>
+      </section>
+
+      <hr>
+<h2 id="1-executive-summary" class="anchored"><a class="anchor" href="#1-executive-summary" aria-label="Link to this section">#</a>1. Executive Summary</h2>
+<p>This plan upgrades the <code>kwg-nonprod</code> EKS cluster from Kubernetes 1.34 to 1.36 via two in-place minor-version hops. Each hop follows the same repeatable sequence:</p>
+<blockquote class="callout note"><p><strong>Control Plane → Core Add-ons → Data Plane (Bottlerocket MNGs) → Validate → Soak</strong></p>
+</blockquote>
+<p>The non-prod upgrade serves a dual purpose:</p>
+<ol>
+<li>Deliver a supported, patched non-prod platform.</li>
+<li>Act as the <strong>rehearsal and evidence-gathering run</strong> for the subsequent production upgrade. Every deviation, failure and fix must be captured in the Learnings Log (Section 12) and folded back into the production runbook.</li>
+</ol>
+<p><strong>Critical architectural constraint:</strong> An EKS control plane <strong>cannot be downgraded</strong>. Once <code>update-cluster-version</code> succeeds, rollback is only possible by <em>rolling forward</em> (fix) or by <em>rebuilding</em> a cluster at the prior version and re-pointing CloudFront. This asymmetry drives the entire gate design in this plan.</p>
+<hr>
+<h2 id="2-scope" class="anchored"><a class="anchor" href="#2-scope" aria-label="Link to this section">#</a>2. Scope</h2>
+<h3 id="21-in-scope" class="anchored"><a class="anchor" href="#21-in-scope" aria-label="Link to this section">#</a>2.1 In Scope</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Layer</th>
+<th>Components</th>
+</tr>
+</thead><tbody><tr>
+<td>Control plane</td>
+<td>EKS API server, scheduler, controller-manager, etcd (AWS-managed)</td>
+</tr>
+<tr>
+<td>Core add-ons</td>
+<td>VPC CNI, <code>kube-proxy</code>, CoreDNS, EBS CSI driver, EKS Pod Identity Agent, snapshot-controller (as applicable)</td>
+</tr>
+<tr>
+<td>Data plane</td>
+<td>All EKS Managed Node Groups (<code>BOTTLEROCKET_x86_64</code>)</td>
+</tr>
+<tr>
+<td>Platform controllers</td>
+<td>Argo CD, AWS Load Balancer Controller (if present), metrics-server, Cluster Autoscaler / Karpenter (if present), External Secrets / Secrets Store CSI (if present), log shipper DaemonSet</td>
+</tr>
+<tr>
+<td>Observability</td>
+<td>In-cluster Prometheus scraper/collector → Amazon Managed Service for Prometheus (AMP); Amazon Managed Grafana (AMG) dashboards &amp; alerts</td>
+</tr>
+<tr>
+<td>Logging</td>
+<td>In-cluster log forwarder DaemonSet → standalone EC2 Elasticsearch/Kibana</td>
+</tr>
+<tr>
+<td>Ingress</td>
+<td><code>bitnami/nginx</code> Helm release (declared chart/app <code>1.21.3</code>) + AWS NLB — <strong>managed manually via <code>helm upgrade</code>, NOT under Argo CD</strong></td>
+</tr>
+<tr>
+<td>Workloads</td>
+<td>45 microservices: Deployment, Service, HPA, ServiceAccount, Secret (Argo CD managed)</td>
+</tr>
+</tbody></table></div>
+<h3 id="22-out-of-scope" class="anchored"><a class="anchor" href="#22-out-of-scope" aria-label="Link to this section">#</a>2.2 Out of Scope</h3>
+<ul>
+<li>Production cluster upgrade (separate change, informed by this one).</li>
+<li>Route 53, CloudFront, WAF, ACM configuration changes — <strong>no changes planned</strong>; these are validation targets only.</li>
+<li>EC2 Elasticsearch/Kibana version upgrade (standalone, outside cluster lifecycle).</li>
+<li>Application code / container base-image upgrades, <strong>except</strong> where required to unblock the upgrade (see Risk R-04, Bitnami image availability).</li>
+<li>VPC/subnet redesign, except free-IP remediation required to permit node surge.</li>
+</ul>
+<h3 id="23-assumptions-confirm-during-phase-1" class="anchored"><a class="anchor" href="#23-assumptions-confirm-during-phase-1" aria-label="Link to this section">#</a>2.3 Assumptions (confirm during Phase 1)</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>#</th>
+<th>Assumption</th>
+<th>Confirm by</th>
+</tr>
+</thead><tbody><tr>
+<td>A-01</td>
+<td>Cluster has no self-managed node groups or Fargate profiles</td>
+<td><code>aws eks list-nodegroups</code> / <code>list-fargate-profiles</code></td>
+</tr>
+<tr>
+<td>A-02</td>
+<td>Nodes are already Bottlerocket (no Amazon Linux 2 remnants)</td>
+<td><code>kubectl get nodes -o wide</code></td>
+</tr>
+<tr>
+<td>A-03</td>
+<td>Git is the authoritative source for the 45 microservices; no manual <code>kubectl apply</code> drift. <strong>nginx is explicitly excluded</strong> — see A-07</td>
+<td><code>argocd app diff</code> across all apps</td>
+</tr>
+<tr>
+<td>A-04</td>
+<td>Authentication uses EKS Access Entries or <code>aws-auth</code> ConfigMap — mode is known and documented</td>
+<td><code>aws eks describe-cluster --query cluster.accessConfig</code></td>
+</tr>
+<tr>
+<td>A-05</td>
+<td>NLB is provisioned via a <code>Service type=LoadBalancer</code> whose identity (name/ARN/DNS) must remain stable</td>
+<td><code>kubectl get svc -o yaml</code> + CloudFront origin config</td>
+</tr>
+<tr>
+<td>A-06</td>
+<td>Sufficient EC2 capacity and subnet IPs exist in us-east-2 AZs for node surge</td>
+<td>Phase 1 capacity check</td>
+</tr>
+<tr>
+<td>A-07</td>
+<td><strong>nginx is an unmanaged Helm release</strong> applied by hand (<code>helm upgrade</code>). Its only state of record is the Helm release Secret in-cluster. The exact chart version, repo and values used at last install are <strong>not currently captured anywhere outside the cluster</strong></td>
+<td><code>helm list -n &lt;ns&gt;</code> + <code>helm get values/manifest</code> (Section 5.7)</td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="3-architecture-context-upgrade-impact-analysis" class="anchored"><a class="anchor" href="#3-architecture-context-upgrade-impact-analysis" aria-label="Link to this section">#</a>3. Architecture Context &amp; Upgrade Impact Analysis</h2>
+<h3 id="31-traffic-path" class="anchored"><a class="anchor" href="#31-traffic-path" aria-label="Link to this section">#</a>3.1 Traffic Path</h3>
+<div class="codeblock" data-lang="text"><button class="copy" type="button">Copy</button><pre><code>Route 53 (DNS)
+   │
+   ▼
+CloudFront  ──  AWS WAF (WebACL)  ──  ACM (TLS cert)
+   │
+   ▼  (origin = NLB DNS name — MUST NOT CHANGE)
+Public NLB  (us-east-2, multi-AZ)
+   │
+   ▼  (target group: nodes or pod IPs)
+nginx (bitnami/nginx Helm release)
+   │
+   ▼
+ClusterIP Service  ──▶  Pod (x45 microservices)</code></pre></div>
+<h3 id="32-where-the-upgrade-actually-hurts" class="anchored"><a class="anchor" href="#32-where-the-upgrade-actually-hurts" aria-label="Link to this section">#</a>3.2 Where the Upgrade Actually Hurts</h3>
+<p>The control-plane upgrade is largely non-disruptive. <strong>Essentially all risk to the traffic path lives in the data-plane node rotation</strong>, where every pod on the cluster is evicted and rescheduled.</p>
+<div class="tablewrap"><table><thead><tr>
+<th>Path element</th>
+<th>Upgrade impact</th>
+<th>Primary mitigation</th>
+</tr>
+</thead><tbody><tr>
+<td><strong>CloudFront origin (NLB DNS)</strong></td>
+<td>If the nginx <code>Service</code> is deleted/recreated (manual <code>helm upgrade</code> with different values, <code>helm uninstall</code>, resource rename, chart bump) a <strong>new NLB with a new DNS name</strong> is created. CloudFront origin silently points at a dead endpoint → full outage. <strong>Argo CD cannot cause this — but equally cannot prevent or repair it</strong>, because nginx is outside GitOps.</td>
+<td><strong>Manual change freeze on the nginx release</strong> for the whole window (human control, not a sync window). Record NLB ARN + DNS as a gate artifact; verify byte-identical pre vs post. Never run <code>helm upgrade</code> on nginx during the window.</td>
+</tr>
+<tr>
+<td><strong>NLB targets</strong></td>
+<td>Node replacement de-registers old targets and registers new ones. Default deregistration delay (300s) plus health-check ramp can create a draining window.</td>
+<td>Rolling, AZ-by-AZ node rotation with <code>maxUnavailable=1</code>. nginx <code>preStop</code> sleep ≥ target deregistration delay. Verify target group health before each subsequent node.</td>
+</tr>
+<tr>
+<td><strong>nginx layer</strong></td>
+<td>nginx pods are evicted during node rotation. If nginx has 1 replica or no PDB, ingress drops entirely. <strong>No controller will self-heal it</strong> — recovery is manual.</td>
+<td>nginx <code>replicas ≥ 3</code>, spread across AZs via <code>topologySpreadConstraints</code>, PDB <code>maxUnavailable: 1</code>. Applied via a <strong>recorded values file</strong> (Section 5.7), as a separate change before the window.</td>
+</tr>
+<tr>
+<td><strong>45 microservice pods</strong></td>
+<td>Mass eviction + reschedule. Scheduling failures if resource requests exceed surge capacity. Singletons cause per-service blips.</td>
+<td>Pre-flight PDB + replica audit. HPA <code>minReplicas ≥ 2</code> for user-facing services. Capacity headroom check.</td>
+</tr>
+<tr>
+<td><strong>In-cluster Prometheus scraper</strong></td>
+<td>Scraper pod eviction = <strong>metrics gap</strong>, which blinds you precisely when you need observability most. If it is a single-replica StatefulSet with a PVC, it must reschedule into the same AZ.</td>
+<td>Treat scraper as a Tier-0 workload. Verify AZ/PVC affinity. Accept and <em>annotate</em> the gap; do not let alerting flap. Silence AMG alerts for the window.</td>
+</tr>
+<tr>
+<td><strong>Log forwarder DaemonSet → EC2 ELK</strong></td>
+<td>DaemonSet pods terminate with the node. In-flight buffers can be lost; new node pods re-tail from position 0 → possible duplicate or missing logs.</td>
+<td>Confirm forwarder image supports target K8s version. Accept duplicates in non-prod; validate ELK ingest continuity post-hop.</td>
+</tr>
+<tr>
+<td><strong>Argo CD itself</strong></td>
+<td>Argo CD runs <em>in</em> the cluster being upgraded. Its own pods get evicted; it may attempt to self-heal workloads mid-rotation.</td>
+<td>Upgrade Argo CD <strong>before</strong> the cluster. Run HA mode or accept controlled downtime. Apply a Sync Window to freeze reconciliation during the window.</td>
+</tr>
+</tbody></table></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong>The ingress tier is the least protected part of this platform.</strong>
+The 45 microservices are declarative, reconciled and rebuildable from Git. nginx — the single
+component every one of them depends on for inbound traffic — is <strong>none of those things</strong>.
+It is a hand-run <code>helm upgrade</code> whose only record is a Secret inside the very cluster being
+upgraded.</p>
+<p>This inverts the usual intuition: the layer with the highest blast radius has the weakest
+recovery story. Sections 5.7 and 6 therefore treat <em>capturing and externalising the nginx
+release state</em> as blocking pre-work, not documentation housekeeping.</p>
+</blockquote>
+<hr>
+<h2 id="4-risk-register" class="anchored"><a class="anchor" href="#4-risk-register" aria-label="Link to this section">#</a>4. Risk Register</h2>
+<div class="tablewrap"><table><thead><tr>
+<th>ID</th>
+<th>Risk</th>
+<th>L</th>
+<th>I</th>
+<th>Mitigation</th>
+<th>Owner</th>
+</tr>
+</thead><tbody><tr>
+<td><strong>R-01</strong></td>
+<td><strong>Control plane cannot be rolled back.</strong> A bad hop is unrecoverable in place.</td>
+<td><span class="sev sev-low">Low</span></td>
+<td><span class="sev sev-critical">Critical</span></td>
+<td>Hard go/no-go gate before each <code>update-cluster-version</code>. All deprecated-API findings closed <em>first</em>. Rebuild-and-repoint contingency documented (Section 10.3).</td>
+<td>Platform Lead</td>
+</tr>
+<tr>
+<td><strong>R-02</strong></td>
+<td>Removed/deprecated APIs in 1.35 or 1.36 break workloads or controllers post-upgrade.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-high">High</span></td>
+<td>Mandatory three-way scan: EKS Cluster Insights + Pluto + <code>kubectl</code> API-deprecation checks, against <strong>official 1.35/1.36 release notes read at execution time</strong> (Section 5.2). Fix in Git, not in cluster.</td>
+<td>Platform + App teams</td>
+</tr>
+<tr>
+<td><strong>R-03</strong></td>
+<td>nginx <code>Service</code> recreated → new NLB DNS → CloudFront origin broken → <strong>total outage</strong>.</td>
+<td><span class="sev sev-low">Low</span></td>
+<td><span class="sev sev-critical">Critical</span></td>
+<td><strong>Manual change freeze on the nginx Helm release</strong> (no <code>helm upgrade</code>/<code>uninstall</code> in the window — enforced by people, since no sync window applies). Record NLB ARN/DNS as a gate artifact. Compare pre/post.</td>
+<td>Network/Platform</td>
+</tr>
+<tr>
+<td><strong>R-04</strong></td>
+<td><strong>Bitnami catalog change.</strong> The declared <code>bitnami/nginx 1.21.3</code> is a very old pin. Following Broadcom&#39;s Aug-2025 Bitnami catalog restructure, legacy image tags were relocated (<code>bitnamilegacy</code>) / removed from the free Docker Hub catalog. Bottlerocket node replacement forces a <strong>fresh image pull</strong> — a pull that may now 404, leaving nginx in <code>ImagePullBackOff</code> and <strong>ingress permanently down</strong>.</td>
+<td><span class="sev sev-medhigh">Med-High</span></td>
+<td><span class="sev sev-critical">Critical</span></td>
+<td><strong>Pre-flight proof-of-pull is a blocking gate.</strong> Verify the exact image ref resolves today. If not: mirror to ECR <em>before</em> the window and apply via a recorded <code>helm upgrade -f values.yaml</code>. Do this as a <strong>separate, prior change</strong>.</td>
+<td>Platform Lead</td>
+</tr>
+<tr>
+<td><strong>R-05</strong></td>
+<td>PDBs block node drain → <code>PodEvictionFailure</code>, node group update stalls/fails.</td>
+<td><span class="sev sev-high">High</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Pre-flight PDB audit: reject <code>minAvailable</code> ≥ <code>replicas</code>, and <code>maxUnavailable: 0</code>. Remediate in Git. Have <code>--force</code> escalation path with explicit approval.</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td><strong>R-06</strong></td>
+<td>Subnet IP exhaustion or EC2 capacity shortfall during surge → node group update fails mid-flight.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-high">High</span></td>
+<td>Free-IP check per subnet before each hop. Confirm surge headroom. Consider VPC CNI prefix delegation if IP-constrained.</td>
+<td>Network</td>
+</tr>
+<tr>
+<td><strong>R-07</strong></td>
+<td>Add-on version incompatibility (VPC CNI / CoreDNS / kube-proxy / AWS LBC / metrics-server) with target version.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-high">High</span></td>
+<td>Resolve compatible versions via <code>describe-addon-versions --kubernetes-version</code> for <strong>each</strong> hop. Upgrade add-ons in the correct order.</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td><strong>R-08</strong></td>
+<td>Argo CD version does not support target K8s API surface → mass <code>Unknown</code>/<code>OutOfSync</code>, or incorrect diffing.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-high">High</span></td>
+<td>Upgrade Argo CD to a release that officially supports 1.36 <strong>before</strong> hop 1.</td>
+<td>GitOps Owner</td>
+</tr>
+<tr>
+<td><strong>R-09</strong></td>
+<td>Metrics/alerting gap during rotation masks a real incident.</td>
+<td><span class="sev sev-high">High</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Pre-stage AMG dashboards. Silence noisy alerts deliberately (scoped + time-bound). Keep an independent synthetic check (CloudFront URL curl loop) running throughout.</td>
+<td>SRE</td>
+</tr>
+<tr>
+<td><strong>R-10</strong></td>
+<td>Argo CD auto-sync/self-heal fights the upgrade (re-creating evicted resources, pruning).</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Sync Window freeze for the duration; documented re-enable step.</td>
+<td>GitOps Owner</td>
+</tr>
+<tr>
+<td><strong>R-11</strong></td>
+<td><code>kube-proxy</code> upgraded ahead of the control plane (version skew violation).</td>
+<td><span class="sev sev-low">Low</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Strict ordering: control plane first, then <code>kube-proxy</code>. Never the reverse.</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td><strong>R-12</strong></td>
+<td>Stateful/singleton workloads (scraper, any PVC-backed service) fail to reschedule due to AZ-pinned EBS volumes.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Inventory all PVCs and their AZs. Ensure node group has capacity in the matching AZ.</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td><strong>R-13</strong></td>
+<td>Bottlerocket Update Operator (BRUPOP), if installed, performs concurrent OS updates during the MNG rotation.</td>
+<td><span class="sev sev-low">Low</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Detect and pause BRUPOP for the window.</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td><strong>R-14</strong></td>
+<td><strong>nginx has no source of truth outside the cluster.</strong> The release exists only as a Helm Secret in the namespace. If the release, namespace or Secret is lost, there is <strong>no declarative way to rebuild ingress</strong> — and the exact values used at install time may be unknown to the team.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-critical">Critical</span></td>
+<td>Capture and externalise release state <strong>before</strong> the window: <code>helm get values</code>, <code>helm get manifest</code>, and a backup of the <code>sh.helm.release.*</code> Secret (Section 5.7). Commit to Git. This is blocking pre-work.</td>
+<td>Platform Lead</td>
+</tr>
+<tr>
+<td><strong>R-15</strong></td>
+<td><strong>Helm chart no longer retrievable.</strong> The Bitnami chart repo was restructured alongside the image catalog. If the pinned <code>bitnami/nginx</code> chart version is no longer in the index, a rebuild or rollback of ingress becomes <strong>impossible at the moment you need it most</strong>.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-high">High</span></td>
+<td><code>helm pull</code> the exact chart version now and vendor the <code>.tgz</code> into Git. Never rely on the upstream repo being available during an incident.</td>
+<td>Platform Lead</td>
+</tr>
+<tr>
+<td><strong>R-16</strong></td>
+<td><strong>Accidental or inconsistent <code>helm upgrade</code> during the window.</strong> Because nginx is hand-managed, a well-meaning re-run with missing <code>--set</code>/<code>-f</code> values silently reverts to chart defaults → Service/NLB recreated, replicas reset, ingress broken. <code>--reuse-values</code> vs <code>--reset-values</code> semantics are a common trap.</td>
+<td><span class="sev sev-med">Med</span></td>
+<td><span class="sev sev-critical">Critical</span></td>
+<td>Explicit human change freeze on nginx. Single named owner holds the release. Always use a <strong>recorded values file</strong> (<code>-f nginx-values.yaml</code>), never ad-hoc <code>--set</code>.</td>
+<td>Platform Lead</td>
+</tr>
+<tr>
+<td><strong>R-17</strong></td>
+<td>Helm <strong>client</strong> version too old to talk to a 1.36 API server, or incompatible with the chart&#39;s <code>kubeVersion</code> constraints.</td>
+<td><span class="sev sev-low">Low</span></td>
+<td><span class="sev sev-med">Med</span></td>
+<td>Verify the Helm CLI version used by the operator supports 1.36 before the window. Standardise the binary/version across the team.</td>
+<td>Platform</td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="5-phase-1-discovery-assessment-t14-to-t10-days" class="anchored"><a class="anchor" href="#5-phase-1-discovery-assessment-t14-to-t10-days" aria-label="Link to this section">#</a>5. Phase 1 — Discovery &amp; Assessment  <em>(T−14 to T−10 days)</em></h2>
+<h3 id="51-baseline-capture-gate-artifacts-store-in-the-change-ticket" class="anchored"><a class="anchor" href="#51-baseline-capture-gate-artifacts-store-in-the-change-ticket" aria-label="Link to this section">#</a>5.1 Baseline Capture (gate artifacts — store in the change ticket)</h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>export CLUSTER=kwg-nonprod
+export REGION=us-east-2
+
+<span class="c"># Cluster + platform facts</span>
+aws eks describe-cluster --name $CLUSTER --region $REGION &gt; baseline-cluster.json
+aws eks list-nodegroups --cluster-name $CLUSTER --region $REGION
+aws eks list-addons     --cluster-name $CLUSTER --region $REGION
+aws eks list-fargate-profiles --cluster-name $CLUSTER --region $REGION<span class="c">   # expect empty (A-01)</span>
+
+<span class="c"># Per-nodegroup detail: AMI type, release version, scaling + update config</span>
+for NG in $(aws eks list-nodegroups --cluster-name $CLUSTER --region $REGION \
+            --query 'nodegroups[]' --output text); do
+  aws eks describe-nodegroup --cluster-name $CLUSTER --nodegroup-name &quot;$NG&quot; \
+      --region $REGION &gt; &quot;baseline-ng-$NG.json&quot;
+done
+
+<span class="c"># Auth mode (Access Entries vs aws-auth)</span>
+aws eks describe-cluster --name $CLUSTER --region $REGION \
+    --query 'cluster.accessConfig'
+
+<span class="c"># Full resource inventory</span>
+kubectl get nodes -o wide                      &gt; baseline-nodes.txt
+kubectl get pods -A -o wide                    &gt; baseline-pods.txt
+kubectl get deploy,sts,ds,svc,hpa,pdb -A       &gt; baseline-workloads.txt
+kubectl get pvc -A -o wide                     &gt; baseline-pvc.txt
+kubectl api-resources                          &gt; baseline-api-resources.txt
+kubectl get apiservices | grep -v &quot;Local.*True&quot; &gt; baseline-apiservices.txt</code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong><code>kubectl get apiservices</code></strong> — any aggregated API service (metrics-server, custom metrics adapters, cert-manager webhooks) that is <code>False (Unavailable)</code> <em>before</em> the upgrade will produce confusing failures <em>after</em>. Fix these first.</p>
+</blockquote>
+<h3 id="52-deprecated-removed-api-scan-mandatory-blocking" class="anchored"><a class="anchor" href="#52-deprecated-removed-api-scan-mandatory-blocking" aria-label="Link to this section">#</a>5.2 Deprecated / Removed API Scan — <strong>mandatory, blocking</strong></h3>
+<blockquote class="callout danger"><div class="callout-label">Critical</div><p><strong> VERIFICATION GATE — do not take this plan&#39;s word for 1.35/1.36 specifics.</strong>
+At execution time, the responsible engineer <strong>must</strong> read and attach to the change ticket:</p>
+<ul>
+<li>The official Kubernetes <strong>Deprecated API Migration Guide</strong> for 1.35 and 1.36.</li>
+<li>The <strong>Kubernetes CHANGELOG</strong> (<code>CHANGELOG-1.35.md</code>, <code>CHANGELOG-1.36.md</code>) — &quot;Urgent Upgrade Notes&quot; and &quot;Removed/Deprecated&quot; sections.</li>
+<li>The <strong>Amazon EKS Kubernetes versions</strong> release-notes page for 1.35 and 1.36.</li>
+</ul>
+<p>This plan deliberately does <strong>not</strong> enumerate specific 1.35/1.36 removals, because stating them without verification is exactly how upgrades break. The scanning below is the safety net, not a substitute for reading the notes.</p>
+</blockquote>
+<p>Run all three, independently:</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># 1) AWS EKS Cluster Insights — AWS's own upgrade-readiness checks</span>
+aws eks list-insights --cluster-name $CLUSTER --region $REGION
+aws eks list-insights --cluster-name $CLUSTER --region $REGION \
+    --filter '{&quot;categories&quot;:[&quot;UPGRADE_READINESS&quot;]}' \
+    --query 'insights[].{id:id,name:name,status:insightStatus.status}' --output table
+
+<span class="c"># Drill into every insight that is not PASSING</span>
+aws eks describe-insight --cluster-name $CLUSTER --id &lt;INSIGHT_ID&gt; --region $REGION
+
+<span class="c"># 2) Pluto — scan the *Git repo* (source of truth), not just the live cluster</span>
+pluto detect-files -d ./gitops-repo --target-versions k8s=v1.36.0 -o wide
+pluto detect-helm --target-versions k8s=v1.36.0 -o wide
+
+<span class="c"># 3) Live-cluster deprecation warnings</span>
+kubectl get --raw /metrics | grep apiserver_requested_deprecated_apis</code></pre></div>
+<blockquote class="callout tip"><div class="callout-label">Tip</div><p> <code>apiserver_requested_deprecated_apis</code> is the highest-signal check available — it reports deprecated APIs that are <em>actually being called right now</em>, including by controllers whose manifests you don&#39;t own. Chase every non-zero series to its <code>User-Agent</code>.</p>
+</blockquote>
+<p><strong>Exit criterion:</strong> zero unresolved UPGRADE_READINESS insights; zero Pluto findings at target 1.36; zero deprecated-API call series attributable to in-scope workloads.</p>
+<h3 id="53-add-on-compatibility-matrix" class="anchored"><a class="anchor" href="#53-add-on-compatibility-matrix" aria-label="Link to this section">#</a>5.3 Add-on Compatibility Matrix</h3>
+<p>For <strong>each hop</strong> (1.35, then 1.36), resolve the target version of every add-on:</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>for ADDON in vpc-cni kube-proxy coredns aws-ebs-csi-driver eks-pod-identity-agent snapshot-controller; do
+  echo &quot;=== $ADDON ===&quot;
+  aws eks describe-addon-versions --addon-name $ADDON \
+      --kubernetes-version 1.35 --region $REGION \
+      --query 'addons[].addonVersions[].{v:addonVersion,default:compatibilities[0].defaultVersion}' \
+      --output table
+done</code></pre></div>
+<p>Record in this table (fill during Phase 1):</p>
+<div class="tablewrap"><table><thead><tr>
+<th>Add-on</th>
+<th>Current (1.34)</th>
+<th>Target @1.35</th>
+<th>Target @1.36</th>
+<th>Managed?</th>
+<th>Notes</th>
+</tr>
+</thead><tbody><tr>
+<td>VPC CNI</td>
+<td></td>
+<td></td>
+<td></td>
+<td>EKS add-on</td>
+<td>Check prefix-delegation setting is preserved</td>
+</tr>
+<tr>
+<td>kube-proxy</td>
+<td></td>
+<td></td>
+<td></td>
+<td>EKS add-on</td>
+<td><strong>Never newer than control plane</strong></td>
+</tr>
+<tr>
+<td>CoreDNS</td>
+<td></td>
+<td></td>
+<td></td>
+<td>EKS add-on</td>
+<td>Verify Corefile customisations survive; check PDB</td>
+</tr>
+<tr>
+<td>EBS CSI Driver</td>
+<td></td>
+<td></td>
+<td></td>
+<td>EKS add-on</td>
+<td>Required if any PVCs exist</td>
+</tr>
+<tr>
+<td>EKS Pod Identity Agent</td>
+<td></td>
+<td></td>
+<td></td>
+<td>EKS add-on</td>
+<td></td>
+</tr>
+<tr>
+<td>AWS Load Balancer Controller</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm (Argo CD)</td>
+<td>Only if it owns the NLB — confirm</td>
+</tr>
+<tr>
+<td>metrics-server</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm</td>
+<td><strong>HPA depends on this</strong></td>
+</tr>
+<tr>
+<td>Argo CD</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm</td>
+<td>Upgrade <strong>first</strong></td>
+</tr>
+<tr>
+<td>Prometheus scraper/collector</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm</td>
+<td>AMP remote-write + SigV4</td>
+</tr>
+<tr>
+<td>Log forwarder (DaemonSet)</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm</td>
+<td>Bottlerocket log paths</td>
+</tr>
+<tr>
+<td>Cluster Autoscaler / Karpenter</td>
+<td></td>
+<td></td>
+<td></td>
+<td>Helm</td>
+<td><strong>Version must match K8s minor</strong> if CA</td>
+</tr>
+</tbody></table></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong>Cluster Autoscaler</strong> is versioned in lockstep with Kubernetes minor versions. If present, it must be bumped on <em>every</em> hop. This is one of the most commonly missed steps.</p>
+</blockquote>
+<h3 id="54-workload-resilience-audit-the-45-microservices" class="anchored"><a class="anchor" href="#54-workload-resilience-audit-the-45-microservices" aria-label="Link to this section">#</a>5.4 Workload Resilience Audit (the 45 microservices)</h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Replica counts — find singletons</span>
+kubectl get deploy -A -o custom-columns=\
+'NS:.metadata.namespace,NAME:.metadata.name,REPLICAS:.spec.replicas,AVAIL:.status.availableReplicas'
+
+<span class="c"># PDBs — the #1 cause of stalled node-group upgrades</span>
+kubectl get pdb -A -o custom-columns=\
+'NS:.metadata.namespace,NAME:.metadata.name,MIN:.spec.minAvailable,MAX:.spec.maxUnavailable,ALLOWED:.status.disruptionsAllowed'
+
+<span class="c"># Any PDB with ALLOWED=0 WILL stall the drain:</span>
+kubectl get pdb -A -o json | jq -r '.items[]
+  | select(.status.disruptionsAllowed==0)
+  | &quot;BLOCKER: \(.metadata.namespace)/\(.metadata.name)&quot;'
+
+<span class="c"># HPA minReplicas</span>
+kubectl get hpa -A -o custom-columns=\
+'NS:.metadata.namespace,NAME:.metadata.name,MIN:.spec.minReplicas,MAX:.spec.maxReplicas,TARGETS:.status.currentMetrics'
+
+<span class="c"># PVCs and their AZ pinning (R-12)</span>
+kubectl get pv -o custom-columns=\
+'NAME:.metadata.name,CLAIM:.spec.claimRef.name,AZ:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]'</code></pre></div>
+<p><strong>Remediation standard (apply via Git / Argo CD for the 45 microservices; via a recorded <code>helm upgrade -f nginx-values.yaml</code> for nginx — see §5.7 — well before the window):</strong></p>
+<div class="tablewrap"><table><thead><tr>
+<th>Control</th>
+<th>Standard for user-facing services</th>
+</tr>
+</thead><tbody><tr>
+<td><code>replicas</code> / HPA <code>minReplicas</code></td>
+<td>≥ 2 (≥ 3 for nginx)</td>
+</tr>
+<tr>
+<td>PodDisruptionBudget</td>
+<td><code>maxUnavailable: 1</code> (preferred over <code>minAvailable</code> — it scales safely)</td>
+</tr>
+<tr>
+<td><code>topologySpreadConstraints</code></td>
+<td>Spread across <code>topology.kubernetes.io/zone</code></td>
+</tr>
+<tr>
+<td>Readiness probe</td>
+<td>Present and accurate</td>
+</tr>
+<tr>
+<td><code>preStop</code> hook</td>
+<td><code>sleep</code> ≥ NLB deregistration delay (for nginx)</td>
+</tr>
+<tr>
+<td><code>terminationGracePeriodSeconds</code></td>
+<td>&gt; preStop sleep + app drain time</td>
+</tr>
+<tr>
+<td>Resource <code>requests</code></td>
+<td>Set — required for the scheduler to place pods during surge</td>
+</tr>
+</tbody></table></div>
+<h3 id="55-capacity-networking-pre-checks" class="anchored"><a class="anchor" href="#55-capacity-networking-pre-checks" aria-label="Link to this section">#</a>5.5 Capacity &amp; Networking Pre-checks</h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Free IPs per subnet — node surge needs them, and so does VPC CNI</span>
+aws ec2 describe-subnets --region $REGION \
+  --subnet-ids $(aws eks describe-cluster --name $CLUSTER --region $REGION \
+                 --query 'cluster.resourcesVpcConfig.subnetIds[]' --output text) \
+  --query 'Subnets[].{AZ:AvailabilityZone,Subnet:SubnetId,Free:AvailableIpAddressCount}' \
+  --output table</code></pre></div>
+<ul>
+<li><strong>Control plane requirement:</strong> EKS needs at least <strong>5 free IP addresses</strong> in the cluster subnets to perform the version upgrade. Treat &lt; 10 free as a blocker.</li>
+<li><strong>Data plane requirement:</strong> surge capacity = <code>maxUnavailable</code> (or surge count) × node ENI/IP consumption, per AZ.</li>
+<li>Confirm the cluster security group still permits control-plane ↔ node communication on 443/10250.</li>
+</ul>
+<h3 id="56-ingress-nlb-identity-capture-gate-artifact" class="anchored"><a class="anchor" href="#56-ingress-nlb-identity-capture-gate-artifact" aria-label="Link to this section">#</a>5.6 Ingress &amp; NLB Identity Capture — <strong>gate artifact</strong></h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Record the exact nginx Service and its NLB identity</span>
+kubectl get svc -n &lt;nginx-ns&gt; &lt;nginx-svc&gt; -o yaml &gt; baseline-nginx-svc.yaml
+kubectl get svc -n &lt;nginx-ns&gt; &lt;nginx-svc&gt; \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' | tee baseline-nlb-dns.txt
+
+aws elbv2 describe-load-balancers --region $REGION \
+  --query 'LoadBalancers[?Type==`network`].{Name:LoadBalancerName,DNS:DNSName,ARN:LoadBalancerArn,State:State.Code}' \
+  --output table | tee baseline-nlb.txt
+
+<span class="c"># Target group health — the real source of truth for ingress readiness</span>
+aws elbv2 describe-target-health --target-group-arn &lt;TG_ARN&gt; --region $REGION \
+  --output table | tee baseline-tg-health.txt
+
+<span class="c"># CloudFront origin must match baseline-nlb-dns.txt</span>
+aws cloudfront get-distribution-config --id &lt;DIST_ID&gt; \
+  --query 'DistributionConfig.Origins.Items[].DomainName'</code></pre></div>
+<h3 id="57-nginx-helm-release-capture-blocking-gate-r-14-r-15-r-16" class="anchored"><a class="anchor" href="#57-nginx-helm-release-capture-blocking-gate-r-14-r-15-r-16" aria-label="Link to this section">#</a>5.7 nginx Helm Release Capture — <strong>blocking gate (R-14, R-15, R-16)</strong></h3>
+<blockquote class="callout danger"><div class="callout-label">Critical</div><p> <strong>nginx is hand-managed and outside Argo CD.</strong> Everything that makes the 45 microservices
+recoverable — Git history, declarative manifests, automated reconciliation — does not exist
+for the single component that fronts all of them. Until the steps below are complete and
+committed to Git, an ingress failure during node rotation has <strong>no documented recovery path</strong>.
+Treat this section as the highest-priority pre-work in the plan.</p>
+</blockquote>
+<p><strong>Step 1 — Identify the release and its true chart version.</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>export NS=&lt;nginx-ns&gt;
+
+<span class="c"># The CHART column gives the real chart version; APP VERSION gives the nginx build.</span>
+<span class="c"># Confirm which one &quot;1.21.3&quot; actually refers to — they are frequently confused.</span>
+helm list -n $NS -o yaml | tee baseline-helm-list.yaml
+
+<span class="c"># Full history, including superseded revisions</span>
+helm history &lt;release&gt; -n $NS</code></pre></div>
+<p><strong>Step 2 — Extract every piece of release state.</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># User-supplied values only — this is what a future `helm upgrade -f` must reproduce</span>
+helm get values &lt;release&gt; -n $NS -o yaml          &gt; nginx-values.yaml
+
+<span class="c"># Fully computed values (user + chart defaults) — reference for comparison</span>
+helm get values &lt;release&gt; -n $NS -a -o yaml       &gt; nginx-values-all.yaml
+
+<span class="c"># The exact rendered manifest currently running</span>
+helm get manifest &lt;release&gt; -n $NS                &gt; nginx-manifest.yaml
+
+<span class="c"># Any hook/notes metadata</span>
+helm get all &lt;release&gt; -n $NS                     &gt; nginx-release-all.txt
+
+<span class="c"># Raw Helm release Secret — the only authoritative copy of release state</span>
+kubectl get secret -n $NS \
+  -l owner=helm,name=&lt;release&gt; \
+  -o yaml                                         &gt; nginx-helm-release-secrets.yaml</code></pre></div>
+<p><strong>Step 3 — Vendor the chart itself (R-15).</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Pull and keep the exact chart version. Do NOT assume the repo will still serve it later.</span>
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+helm pull bitnami/nginx --version &lt;CHART_VERSION&gt; -d ./vendor/
+
+<span class="c"># If the version is already gone from the index, recover it from the release Secret:</span>
+<span class="c">#   the gzipped chart is embedded in sh.helm.release.v1.&lt;release&gt;.v&lt;N&gt;</span>
+kubectl get secret -n $NS sh.helm.release.v1.&lt;release&gt;.v&lt;N&gt; \
+  -o jsonpath='{.data.release}' | base64 -d | base64 -d | gunzip &gt; release.json</code></pre></div>
+<blockquote class="callout tip"><div class="callout-label">Tip</div><p> The Helm release Secret embeds the <strong>entire chart</strong>, double-base64&#39;d then gzipped. If the
+upstream repo has already dropped your version, this is your recovery route — and it only
+works while the cluster and that Secret still exist. Extract it <em>now</em>, not during an incident.</p>
+</blockquote>
+<p><strong>Step 4 — Prove the image is still pullable (R-04).</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>kubectl get deploy -n $NS &lt;nginx-deploy&gt; \
+  -o jsonpath='{.spec.template.spec.containers[*].image}'
+
+<span class="c"># Prove it resolves from a clean cache TODAY</span>
+crane manifest &lt;resolved-image-ref&gt;<span class="c">     # or: docker pull --platform linux/amd64 &lt;ref&gt;</span></code></pre></div>
+<p><strong>Step 5 — Commit everything to Git</strong> (<code>platform/ingress/nginx/</code>): <code>nginx-values.yaml</code>,
+<code>nginx-manifest.yaml</code>, the vendored chart <code>.tgz</code>, and a <code>README</code> recording the <strong>exact</strong>
+<code>helm upgrade</code> command, including the release name, namespace and <code>-f</code> file.</p>
+<p><strong>If the image pull or chart pull fails:</strong></p>
+<ol>
+<li><strong>Stop.</strong> Do not schedule the upgrade window.</li>
+<li>Mirror the image (by <strong>digest</strong>, not tag) to a private ECR repo in <code>us-east-2</code>; vendor the chart <code>.tgz</code> from the release Secret.</li>
+<li>Apply via a recorded values file as a <strong>separate, prior change</strong>:<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>helm upgrade &lt;release&gt; ./vendor/nginx-&lt;ver&gt;.tgz -n $NS \
+     -f nginx-values.yaml --set image.registry=&lt;acct&gt;.dkr.ecr.us-east-2.amazonaws.com</code></pre></div>
+</li>
+<li>Validate by <strong>deliberately deleting one nginx pod</strong> and confirming it re-pulls and reaches Ready.</li>
+<li>Confirm the NLB DNS name is <strong>unchanged</strong> after that change (§5.6).</li>
+<li>Only then schedule the upgrade.</li>
+</ol>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong><code>--reuse-values</code> vs <code>--reset-values</code> (R-16).</strong> Re-running <code>helm upgrade</code> without
+reproducing the original values is the most common way hand-managed releases get silently
+reset to chart defaults — which here would recreate the Service, mint a <strong>new NLB</strong>, and break
+the CloudFront origin. Always pass an explicit <code>-f nginx-values.yaml</code>. Never use ad-hoc
+<code>--set</code> flags that aren&#39;t recorded in that file.</p>
+</blockquote>
+<blockquote class="callout note"><p>This remains the single most likely cause of a non-recoverable ingress outage in this upgrade, because the failure only manifests at node-replacement time — long after the control plane has become unrollbackable.</p>
+</blockquote>
+<hr>
+<h2 id="6-phase-2-remediation-preparation-t10-to-t3-days" class="anchored"><a class="anchor" href="#6-phase-2-remediation-preparation-t10-to-t3-days" aria-label="Link to this section">#</a>6. Phase 2 — Remediation &amp; Preparation  <em>(T−10 to T−3 days)</em></h2>
+<div class="tablewrap"><table><thead><tr>
+<th>#</th>
+<th>Task</th>
+<th>Owner</th>
+<th>Gate</th>
+</tr>
+</thead><tbody><tr>
+<td>2.1</td>
+<td>Close every Cluster Insight / Pluto finding from 5.2 — <strong>in Git</strong>, synced via Argo CD</td>
+<td>App + Platform</td>
+<td>Re-scan returns clean</td>
+</tr>
+<tr>
+<td>2.2</td>
+<td>Mirror + repoint nginx image to ECR if 5.7 failed</td>
+<td>Platform</td>
+<td>Pod re-pull proven</td>
+</tr>
+<tr>
+<td>2.3</td>
+<td>Upgrade <strong>Argo CD</strong> to a release supporting K8s 1.36</td>
+<td>GitOps Owner</td>
+<td>All 45 apps <code>Synced/Healthy</code> post-upgrade</td>
+</tr>
+<tr>
+<td>2.4</td>
+<td>Apply workload resilience standard (5.4) to all 45 services</td>
+<td>App teams</td>
+<td>Zero PDBs with <code>disruptionsAllowed=0</code></td>
+</tr>
+<tr>
+<td>2.5</td>
+<td>Bump Cluster Autoscaler to match target minor (if used)</td>
+<td>Platform</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.6</td>
+<td>Verify AWS LBC version supports 1.36 (if it owns the NLB)</td>
+<td>Platform</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.7</td>
+<td>Verify log forwarder &amp; Prometheus scraper images support 1.36</td>
+<td>SRE</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.8</td>
+<td>Detect &amp; plan to pause BRUPOP (R-13)</td>
+<td>Platform</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.9</td>
+<td>Remediate subnet free-IP shortfalls</td>
+<td>Network</td>
+<td>≥ 10 free IPs/subnet</td>
+</tr>
+<tr>
+<td>2.10</td>
+<td>Take Velero backup + EBS snapshots of all PVs</td>
+<td>Platform</td>
+<td>Restore test passed</td>
+</tr>
+<tr>
+<td>2.11</td>
+<td>Confirm Argo CD Sync Window config and the exact re-enable procedure</td>
+<td>GitOps Owner</td>
+<td>Dry-run rehearsed</td>
+</tr>
+<tr>
+<td>2.12</td>
+<td>Build the synthetic monitor (continuous curl of the CloudFront URL, logging HTTP status + latency)</td>
+<td>SRE</td>
+<td>Running and alerting</td>
+</tr>
+<tr>
+<td>2.13</td>
+<td>Pre-stage AMG dashboard: node readiness, pod restarts, 5xx rate, NLB <code>UnHealthyHostCount</code>, <code>TargetResponseTime</code></td>
+<td>SRE</td>
+<td>Dashboard live</td>
+</tr>
+<tr>
+<td>2.14</td>
+<td>Schedule AMG alert silences (scoped, time-bound to the window)</td>
+<td>SRE</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.15</td>
+<td>Confirm EKS cluster <strong>upgrade policy</strong> (<code>STANDARD</code> vs <code>EXTENDED</code>) and cost implications</td>
+<td>Platform</td>
+<td>—</td>
+</tr>
+<tr>
+<td>2.16</td>
+<td><strong>Capture &amp; commit nginx Helm release state</strong> — values, manifest, release Secret, vendored chart <code>.tgz</code> (§5.7)</td>
+<td>Platform Lead</td>
+<td>Committed to Git; <code>helm upgrade</code> command documented verbatim</td>
+</tr>
+<tr>
+<td>2.17</td>
+<td><strong>Harden nginx</strong> to the §5.4 standard (replicas ≥ 3, PDB <code>maxUnavailable: 1</code>, zone spread, <code>preStop</code> sleep) via recorded <code>helm upgrade -f nginx-values.yaml</code></td>
+<td>Platform Lead</td>
+<td>NLB DNS <strong>unchanged</strong> after the change; pod-delete re-pull test passed</td>
+</tr>
+<tr>
+<td>2.18</td>
+<td>Declare a <strong>named owner</strong> for the nginx release and an explicit manual change freeze for the window (R-16)</td>
+<td>Change Owner</td>
+<td>Freeze communicated to all engineers with cluster access</td>
+</tr>
+<tr>
+<td>2.19</td>
+<td>Verify the <strong>Helm CLI version</strong> in use supports K8s 1.36 (R-17)</td>
+<td>Platform</td>
+<td>Version standardised and recorded</td>
+</tr>
+</tbody></table></div>
+<h3 id="61-backup-strategy" class="anchored"><a class="anchor" href="#61-backup-strategy" aria-label="Link to this section">#</a>6.1 Backup Strategy</h3>
+<p>Although Git is the source of truth for the 45 microservices, back up what Git does <strong>not</strong> contain:</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Full cluster state snapshot</span>
+kubectl get all,cm,secret,ing,pdb,hpa,sa,pvc,crd -A -o yaml &gt; full-cluster-backup.yaml
+
+<span class="c"># Helm release state for ALL hand-managed releases (nginx especially) — see §5.7</span>
+helm list -A -o yaml &gt; helm-releases-all.yaml
+kubectl get secret -A -l owner=helm -o yaml &gt; helm-release-secrets-backup.yaml
+
+<span class="c"># Velero — namespaced resources + PV snapshots</span>
+velero backup create pre-upgrade-134 --include-cluster-resources=true --wait
+velero backup describe pre-upgrade-134 --details</code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> Secrets created out-of-band, controller-generated state (e.g. cert-manager-issued certs), any <code>kubectl</code>-applied drift, <strong>and the entire nginx Helm release</strong> exist <strong>only</strong> in the cluster. Velero plus the §5.7 capture are the only recovery paths for these.</p>
+</blockquote>
+<hr>
+<h2 id="7-phase-3-rehearsal-t7-days-strongly-recommended" class="anchored"><a class="anchor" href="#7-phase-3-rehearsal-t7-days-strongly-recommended" aria-label="Link to this section">#</a>7. Phase 3 — Rehearsal  <em>(T−7 days, strongly recommended)</em></h2>
+<p>Because the control plane cannot be rolled back, rehearse on a disposable clone before touching <code>kwg-nonprod</code>:</p>
+<ol>
+<li>Provision <code>kwg-upgrade-rehearsal</code> at 1.34 using the same IaC module, same add-on versions, same VPC/subnet topology.</li>
+<li>Deploy a representative subset (nginx + ~5 microservices + scraper + log forwarder) via Argo CD.</li>
+<li>Execute the full Section 8 runbook end-to-end, timing each step.</li>
+<li>Record actual durations → calibrate the change-window estimate.</li>
+<li>Deliberately inject the top failure modes and practise the response:<ul>
+<li>A PDB with <code>disruptionsAllowed=0</code> → observe <code>PodEvictionFailure</code>, practise remediation.</li>
+<li>Delete the nginx image from the registry → observe <code>ImagePullBackOff</code>, practise ECR failover.</li>
+</ul>
+</li>
+<li>Destroy the rehearsal cluster.</li>
+</ol>
+<p><strong>Output:</strong> a validated, timed runbook and a rehearsed team. If rehearsal is skipped (budget/time), R-01 and R-04 ratings should be escalated and explicitly accepted by the change approver.</p>
+<hr>
+<h2 id="8-phase-4-execution-runbook" class="anchored"><a class="anchor" href="#8-phase-4-execution-runbook" aria-label="Link to this section">#</a>8. Phase 4 — Execution Runbook</h2>
+<blockquote class="callout note"><p><strong>Execute Hop 1 (1.34 → 1.35) completely, including the soak period, before beginning Hop 2 (1.35 → 1.36).</strong> Do not chain hops in a single window. Each hop is an independent change with its own go/no-go.</p>
+</blockquote>
+<h3 id="80-pre-window-gono-go-checklist" class="anchored"><a class="anchor" href="#80-pre-window-gono-go-checklist" aria-label="Link to this section">#</a>8.0 Pre-Window Go/No-Go Checklist</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Gate</th>
+<th>Criterion</th>
+<th>Pass?</th>
+</tr>
+</thead><tbody><tr>
+<td>G-1</td>
+<td>Cluster Insights: zero UPGRADE_READINESS failures</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-2</td>
+<td>Pluto scan of Git repo at target version: clean</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-3</td>
+<td><code>apiserver_requested_deprecated_apis</code>: no in-scope series</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-4</td>
+<td>nginx image proof-of-pull succeeds (R-04)</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-4b</td>
+<td>nginx Helm values + manifest + vendored chart committed to Git (R-14/R-15)</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-4c</td>
+<td>nginx manual change freeze declared; named owner on call (R-16)</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-5</td>
+<td>All 45 Argo CD apps <code>Synced</code> + <code>Healthy</code></td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-6</td>
+<td>Zero PDBs with <code>disruptionsAllowed=0</code></td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-7</td>
+<td>≥ 10 free IPs in every cluster subnet</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-8</td>
+<td>Add-on target versions resolved for this hop</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-9</td>
+<td>Velero backup completed and verified</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-10</td>
+<td>NLB ARN + DNS recorded; CloudFront origin matches</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-11</td>
+<td>Synthetic monitor running; baseline captured</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-12</td>
+<td>All <code>apiservices</code> Available</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+<tr>
+<td>G-13</td>
+<td>Rollback/contingency owner identified and on-call</td>
+<td><input type="checkbox" class="gate-check"></td>
+</tr>
+</tbody></table></div>
+<p><strong>Any <span class="boxglyph">☐</span> unchecked = NO-GO.</strong> G-1 through G-4c are non-negotiable.</p>
+<hr>
+<h3 id="step-1-freeze-baseline-t0-20-min" class="anchored"><a class="anchor" href="#step-1-freeze-baseline-t0-20-min" aria-label="Link to this section">#</a>Step 1 — Freeze &amp; Baseline  <em>(T+0, ~20 min)</em></h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># 1.1 Freeze Argo CD reconciliation (prevents fight-back during rotation, R-10)</span>
+<span class="c">#     Preferred: a deny-all Sync Window on the parent/app-of-apps project.</span>
+argocd proj windows add &lt;project&gt; --kind deny --schedule '* * * * *' \
+       --duration 6h --applications '*' --manual-sync true
+
+<span class="c"># 1.2 Snapshot Argo CD state as the comparison baseline</span>
+argocd app list -o json &gt; argocd-baseline-hop1.json
+argocd app list | grep -v &quot;Synced.*Healthy&quot;<span class="c">   # expect empty</span>
+
+<span class="c"># 1.3 Pause BRUPOP if present (R-13)</span>
+kubectl -n brupop-bottlerocket-aws scale deploy --all --replicas=0 2&gt;/dev/null || true
+
+<span class="c"># 1.4 Record nginx release revision + NLB identity (nginx is NOT under Argo CD, so there is</span>
+<span class="c">#     no sync window to freeze — this is a human freeze plus a recorded baseline, R-03/R-16)</span>
+helm list -n $NS -o yaml | tee nginx-release-prehop.yaml
+helm history &lt;release&gt; -n $NS | tail -3
+kubectl get svc -n $NS &lt;nginx-svc&gt; \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' | tee nlb-dns-prehop.txt
+
+<span class="c"># 1.5 Apply scoped, time-bound AMG/alertmanager silences</span>
+<span class="c"># 1.6 Confirm synthetic monitor is green</span></code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong>There is no automated freeze for nginx.</strong> Argo CD sync windows protect the 45
+microservices only. The nginx release is protected solely by the agreement that <strong>nobody runs
+<code>helm upgrade</code>, <code>helm rollback</code> or <code>helm uninstall</code> against it during the window</strong>. State that
+explicitly in the incident channel at the start of the window, and name the single owner who
+holds the release.</p>
+</blockquote>
+<p><strong>Checkpoint:</strong> Argo CD frozen, nginx freeze declared and revision recorded, baseline captured, alerts silenced, synthetic green.</p>
+<hr>
+<h3 id="step-2-control-plane-upgrade-2545-min-aws-managed" class="anchored"><a class="anchor" href="#step-2-control-plane-upgrade-2545-min-aws-managed" aria-label="Link to this section">#</a>Step 2 — Control Plane Upgrade  <em>(~25–45 min, AWS-managed)</em></h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>export TARGET=1.35<span class="c">   # Hop 2: 1.36</span>
+
+aws eks update-cluster-version \
+    --name $CLUSTER --region $REGION \
+    --kubernetes-version $TARGET
+
+<span class="c"># Capture the update ID and poll</span>
+UPDATE_ID=$(aws eks list-updates --name $CLUSTER --region $REGION \
+            --query 'updateIds[0]' --output text)
+
+watch -n 30 &quot;aws eks describe-update --name $CLUSTER --update-id $UPDATE_ID \
+             --region $REGION --query 'update.{Status:status,Type:type,Errors:errors}'&quot;</code></pre></div>
+<blockquote class="callout danger"><div class="callout-label">Critical</div><p> <strong>Point of no return.</strong> Once this call is accepted, the cluster cannot be downgraded.</p>
+</blockquote>
+<p><strong>During the upgrade — expected behaviour:</strong></p>
+<ul>
+<li>Workloads continue running uninterrupted. Nodes are untouched.</li>
+<li>Brief API-server unavailability / throttling is normal. <code>kubectl</code> may transiently error.</li>
+<li>Argo CD may log connection errors — expected and harmless while frozen.</li>
+<li>Synthetic monitor must stay <strong>green throughout</strong>. If it goes red, the problem is <em>not</em> the control-plane upgrade — investigate the data plane.</li>
+</ul>
+<p><strong>Validation:</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>aws eks describe-cluster --name $CLUSTER --region $REGION --query 'cluster.{v:version,s:status}'
+kubectl version
+kubectl get --raw /readyz?verbose
+kubectl get nodes<span class="c">        # nodes still on old kubelet — expected and supported</span></code></pre></div>
+<blockquote class="callout info"><div class="callout-label">Note</div><p> <strong>Version skew:</strong> a kubelet up to 3 minor versions older than the API server is supported, so 1.34 nodes under a 1.36 control plane are valid. This is what makes the two-hop control-plane-first sequence safe — but <strong>do not leave nodes behind permanently</strong>; finish the data plane in the same window.</p>
+</blockquote>
+<p><strong>Checkpoint:</strong> cluster <code>ACTIVE</code> at target version, <code>/readyz</code> ok, synthetic green.</p>
+<hr>
+<h3 id="step-3-core-add-ons-1525-min" class="anchored"><a class="anchor" href="#step-3-core-add-ons-1525-min" aria-label="Link to this section">#</a>Step 3 — Core Add-ons  <em>(~15–25 min)</em></h3>
+<blockquote class="callout note"><p><strong>Order matters.</strong> <code>kube-proxy</code> must never be newer than the control plane — hence it is upgraded <em>after</em> Step 2 and <em>before</em> Step 4.</p>
+</blockquote>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># 3.1 VPC CNI</span>
+aws eks update-addon --cluster-name $CLUSTER --region $REGION \
+    --addon-name vpc-cni --addon-version &lt;v&gt; \
+    --resolve-conflicts PRESERVE
+
+<span class="c"># 3.2 kube-proxy</span>
+aws eks update-addon --cluster-name $CLUSTER --region $REGION \
+    --addon-name kube-proxy --addon-version &lt;v&gt; \
+    --resolve-conflicts PRESERVE
+
+<span class="c"># 3.3 CoreDNS</span>
+aws eks update-addon --cluster-name $CLUSTER --region $REGION \
+    --addon-name coredns --addon-version &lt;v&gt; \
+    --resolve-conflicts PRESERVE
+
+<span class="c"># 3.4 EBS CSI driver / Pod Identity Agent / snapshot-controller as applicable</span></code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> Use <code>--resolve-conflicts PRESERVE</code> to retain custom configuration (CoreDNS Corefile edits, VPC CNI env vars such as prefix delegation / custom networking). <code>OVERWRITE</code> silently discards them. If you must use <code>OVERWRITE</code>, re-apply customisations immediately and verify.</p>
+</blockquote>
+<p><strong>Validation after each add-on:</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>kubectl -n kube-system rollout status ds/aws-node --timeout=5m
+kubectl -n kube-system rollout status ds/kube-proxy --timeout=5m
+kubectl -n kube-system rollout status deploy/coredns --timeout=5m
+
+<span class="c"># DNS smoke test — fail fast here, everything depends on it</span>
+kubectl run dnstest --rm -it --restart=Never --image=busybox:1.36 -- \
+  nslookup kubernetes.default.svc.cluster.local</code></pre></div>
+<p><strong>Checkpoint:</strong> all add-ons <code>ACTIVE</code>, DaemonSets fully rolled, in-cluster DNS resolving, synthetic green.</p>
+<hr>
+<h3 id="step-4-data-plane-bottlerocket-managed-node-groups-longest-step-1020-min-per-node" class="anchored"><a class="anchor" href="#step-4-data-plane-bottlerocket-managed-node-groups-longest-step-1020-min-per-node" aria-label="Link to this section">#</a>Step 4 — Data Plane: Bottlerocket Managed Node Groups  <em>(longest step — ~10–20 min per node)</em></h3>
+<blockquote class="callout note"><p><strong>This is where user impact occurs.</strong> Rotate <strong>one node group at a time</strong>, and within a group let EKS roll <strong>one node at a time</strong>.</p>
+</blockquote>
+<p><strong>4.1 — Set a conservative update config (per node group):</strong></p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>aws eks update-nodegroup-config \
+    --cluster-name $CLUSTER --nodegroup-name &lt;NG&gt; --region $REGION \
+    --update-config maxUnavailable=1</code></pre></div>
+<p><strong>4.2 — Upgrade the node group.</strong> Because the AMI type is <code>BOTTLEROCKET_x86_64</code> and (assuming) no custom launch template pins an AMI ID, EKS resolves the correct Bottlerocket AMI automatically:</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>aws eks update-nodegroup-version \
+    --cluster-name $CLUSTER --nodegroup-name &lt;NG&gt; --region $REGION \
+    --kubernetes-version $TARGET</code></pre></div>
+<blockquote class="callout note"><p><strong>If a custom launch template pins a specific AMI ID</strong>, <code>--kubernetes-version</code> is not sufficient. Resolve the new Bottlerocket AMI, create a new launch-template version, then upgrade:</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>aws ssm get-parameter --region $REGION \
+  --name /aws/service/bottlerocket/aws-k8s-$TARGET/x86_64/latest/image_id \
+  --query Parameter.Value --output text</code></pre></div>
+<p>Then: <code>aws eks update-nodegroup-version --launch-template version=&lt;N&gt;,id=&lt;lt-id&gt; ...</code></p>
+</blockquote>
+<p><strong>4.3 — Monitor the rotation.</strong> The managed update proceeds in phases: <em>setup → scale up (surge) → cordon &amp; drain → scale down</em>.</p>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># In one terminal — node churn</span>
+watch -n 15 'kubectl get nodes -o custom-columns=\
+NAME:.metadata.name,VER:.status.nodeInfo.kubeletVersion,\
+STATUS:.status.conditions[-1].type,AGE:.metadata.creationTimestamp'
+
+<span class="c"># In another — pods that failed to reschedule</span>
+watch -n 15 'kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded'
+
+<span class="c"># In another — NLB target health (the real user-impact signal)</span>
+watch -n 20 &quot;aws elbv2 describe-target-health --region $REGION \
+  --target-group-arn &lt;TG_ARN&gt; \
+  --query 'TargetHealthDescriptions[].TargetHealth.State' --output text&quot;
+
+<span class="c"># And the synthetic monitor must remain green</span></code></pre></div>
+<p><strong>4.4 — Failure handling:</strong></p>
+<div class="tablewrap"><table><thead><tr>
+<th>Symptom</th>
+<th>Diagnosis</th>
+<th>Action</th>
+</tr>
+</thead><tbody><tr>
+<td>Update status <code>Failed</code>, reason <code>PodEvictionFailure</code></td>
+<td>A PDB is blocking drain (R-05)</td>
+<td>Identify via <code>kubectl get pdb -A</code> → <code>disruptionsAllowed=0</code>. <strong>Fix the PDB in Git</strong>, re-sync, retry. Only use <code>--force-update-version</code> with explicit approval — it evicts regardless of PDBs.</td>
+</tr>
+<tr>
+<td>Pods <code>Pending</code> / <code>FailedScheduling</code></td>
+<td>Insufficient capacity or AZ-pinned PVC (R-06/R-12)</td>
+<td>Check <code>kubectl describe pod</code>. Add capacity in the correct AZ.</td>
+</tr>
+<tr>
+<td>nginx <code>ImagePullBackOff</code></td>
+<td><strong>R-04 materialised</strong></td>
+<td>Immediately repoint to the ECR mirror. This is an ingress-down event.</td>
+</tr>
+<tr>
+<td><code>InsufficientFreeAddresses</code></td>
+<td>Subnet IP exhaustion</td>
+<td>Free IPs / enable prefix delegation, retry.</td>
+</tr>
+<tr>
+<td>Node <code>NotReady</code> after join</td>
+<td>CNI or add-on mismatch</td>
+<td>Check <code>aws-node</code> logs. Bottlerocket: use SSM + admin container (no SSH).</td>
+</tr>
+</tbody></table></div>
+<blockquote class="callout tip"><div class="callout-label">Tip</div><p> <strong>Bottlerocket debugging:</strong> there is no SSH and no shell on the host. Use
+<code>aws ssm start-session --target &lt;instance-id&gt;</code> then <code>enter-admin-container</code>, and
+<code>apiclient get</code> / <code>journalctl -u kubelet</code> from there.</p>
+</blockquote>
+<p><strong>4.5 — Repeat for every node group</strong>, validating between each.</p>
+<p><strong>Checkpoint:</strong> all nodes report the target <code>kubeletVersion</code>, zero <code>NotReady</code>, zero <code>Pending</code> pods, all NLB targets <code>healthy</code>, synthetic green.</p>
+<hr>
+<h3 id="step-5-unfreeze-reconcile-argo-cd-20-min" class="anchored"><a class="anchor" href="#step-5-unfreeze-reconcile-argo-cd-20-min" aria-label="Link to this section">#</a>Step 5 — Unfreeze &amp; Reconcile Argo CD  <em>(~20 min)</em></h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># 5.1 Remove the sync window</span>
+argocd proj windows delete &lt;project&gt; &lt;window-id&gt;
+
+<span class="c"># 5.2 Force a hard refresh across all apps (clears cached API discovery —</span>
+<span class="c">#     important after a minor-version change)</span>
+for APP in $(argocd app list -o name); do
+  argocd app get &quot;$APP&quot; --hard-refresh &gt;/dev/null
+done
+
+<span class="c"># 5.3 Compare against baseline</span>
+argocd app list -o json &gt; argocd-post-hop1.json
+argocd app list | grep -v &quot;Synced.*Healthy&quot;<span class="c">   # expect empty</span>
+
+<span class="c"># 5.4 Resume BRUPOP if it was paused</span>
+kubectl -n brupop-bottlerocket-aws scale deploy --all --replicas=1 2&gt;/dev/null || true
+
+<span class="c"># 5.5 Lift the manual nginx freeze and confirm the release is untouched</span>
+<span class="c">#     REVISION must be identical to nginx-release-prehop.yaml — any change means</span>
+<span class="c">#     someone ran helm during the window (R-16). Investigate before closing.</span>
+helm history &lt;release&gt; -n $NS | tail -3
+helm status &lt;release&gt; -n $NS | head -5<span class="c">    # expect STATUS: deployed</span></code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> A <strong>hard refresh</strong> is specifically required after a minor upgrade: Argo CD caches API-resource discovery, and a stale cache after an API-version change produces false <code>OutOfSync</code> or <code>Unknown</code> states across all 45 apps.</p>
+</blockquote>
+<p><strong>Checkpoint:</strong> all 45 apps <code>Synced</code>/<code>Healthy</code>, matching the Step 1.2 baseline.</p>
+<hr>
+<h2 id="9-phase-5-validation" class="anchored"><a class="anchor" href="#9-phase-5-validation" aria-label="Link to this section">#</a>9. Phase 5 — Validation</h2>
+<h3 id="91-platform-validation" class="anchored"><a class="anchor" href="#91-platform-validation" aria-label="Link to this section">#</a>9.1 Platform Validation</h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Versions aligned end-to-end</span>
+kubectl version
+kubectl get nodes -o custom-columns=NAME:.metadata.name,VERSION:.status.nodeInfo.kubeletVersion,OS:.status.nodeInfo.osImage
+
+<span class="c"># Nothing unhealthy anywhere</span>
+kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
+kubectl get events -A --sort-by=.lastTimestamp | tail -50
+
+<span class="c"># Aggregated APIs healthy (metrics-server etc.)</span>
+kubectl get apiservices | grep -v &quot;Local.*True&quot;
+
+<span class="c"># HPA actually functioning — requires metrics-server to be healthy</span>
+kubectl top nodes
+kubectl top pods -A | head
+kubectl get hpa -A<span class="c">    # TARGETS must show real values, not &lt;unknown&gt;</span></code></pre></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <code>&lt;unknown&gt;</code> in HPA targets means metrics-server is broken → <strong>all 45 HPAs have silently stopped scaling</strong>. This is a classic post-upgrade failure and is easy to miss because nothing crashes.</p>
+</blockquote>
+<h3 id="92-ingress-traffic-path-validation-the-critical-gate-r-03" class="anchored"><a class="anchor" href="#92-ingress-traffic-path-validation-the-critical-gate-r-03" aria-label="Link to this section">#</a>9.2 Ingress / Traffic-Path Validation — <strong>the critical gate (R-03)</strong></h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># 0) nginx Helm release must be untouched and healthy (R-16)</span>
+helm status &lt;release&gt; -n $NS | head -5<span class="c">          # STATUS: deployed</span>
+helm history &lt;release&gt; -n $NS | tail -2<span class="c">         # REVISION unchanged vs pre-hop baseline</span>
+
+<span class="c"># 1) NLB identity MUST be unchanged vs baseline</span>
+kubectl get svc -n &lt;nginx-ns&gt; &lt;nginx-svc&gt; \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+diff &lt;(echo &quot;$CURRENT_DNS&quot;) baseline-nlb-dns.txt<span class="c">    # MUST be identical</span>
+
+aws elbv2 describe-load-balancers --region $REGION \
+  --query 'LoadBalancers[?Type==`network`].[LoadBalancerName,DNSName,LoadBalancerArn]' --output table
+<span class="c"># Compare ARN against baseline-nlb.txt</span>
+
+<span class="c"># 2) All targets healthy</span>
+aws elbv2 describe-target-health --target-group-arn &lt;TG_ARN&gt; --region $REGION --output table
+
+<span class="c"># 3) End-to-end through the real path</span>
+curl -sS -o /dev/null -w 'status=%{http_code} ttfb=%{time_starttransfer}s total=%{time_total}s\n' \
+     https://&lt;public-fqdn&gt;/
+
+<span class="c"># 4) Confirm CloudFront is serving (not bypassing) and WAF is intact</span>
+curl -sSI https://&lt;public-fqdn&gt;/ | grep -iE 'x-cache|x-amz-cf-id|server'</code></pre></div>
+<h3 id="93-application-validation-45-microservices" class="anchored"><a class="anchor" href="#93-application-validation-45-microservices" aria-label="Link to this section">#</a>9.3 Application Validation (45 microservices)</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Check</th>
+<th>Method</th>
+<th>Pass criterion</th>
+</tr>
+</thead><tbody><tr>
+<td>All Deployments available</td>
+<td><code>kubectl get deploy -A</code></td>
+<td><code>AVAILABLE == DESIRED</code> for all</td>
+</tr>
+<tr>
+<td>No crash loops</td>
+<td><code>kubectl get pods -A | grep -E &#39;CrashLoop|Error&#39;</code></td>
+<td>Empty</td>
+</tr>
+<tr>
+<td>Restart counts stable</td>
+<td>Compare to <code>baseline-pods.txt</code></td>
+<td>No ongoing increase</td>
+</tr>
+<tr>
+<td>Service endpoints populated</td>
+<td><code>kubectl get endpoints -A</code></td>
+<td>No empty <code>ENDPOINTS</code> for in-use Services</td>
+</tr>
+<tr>
+<td>ServiceAccount / IRSA / Pod Identity</td>
+<td>Exercise an AWS API call from a pod</td>
+<td>Credentials resolve; no <code>AccessDenied</code></td>
+</tr>
+<tr>
+<td>Secrets mounted</td>
+<td>Spot-check 5 services</td>
+<td>Values present</td>
+</tr>
+<tr>
+<td>HPA scaling</td>
+<td>Generate load on one service</td>
+<td>Scales up, then back down</td>
+</tr>
+<tr>
+<td>Business smoke tests</td>
+<td>Team-owned test suite</td>
+<td>100% pass</td>
+</tr>
+</tbody></table></div>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> <strong>Explicitly test IRSA / Pod Identity.</strong> Token-projection and ServiceAccount behaviour is a recurring area of change across Kubernetes minors, and failures surface as runtime <code>AccessDenied</code> against S3/SQS/Secrets Manager — not as pod crashes. A green <code>kubectl get pods</code> proves nothing here.</p>
+</blockquote>
+<h3 id="94-observability-logging-validation" class="anchored"><a class="anchor" href="#94-observability-logging-validation" aria-label="Link to this section">#</a>9.4 Observability &amp; Logging Validation</h3>
+<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code><span class="c"># Prometheus scraper healthy and remote-writing to AMP</span>
+kubectl get pods -n &lt;prometheus-ns&gt;
+kubectl logs -n &lt;prometheus-ns&gt; &lt;scraper-pod&gt; --tail=100 | grep -iE 'error|remote_write|403|SignatureDoesNotMatch'</code></pre></div>
+<ul>
+<li><strong>AMP:</strong> query a known metric with a time range spanning the window. Confirm the data gap is bounded and matches the rotation period — nothing beyond it.</li>
+<li><strong>AMG:</strong> every dashboard renders; no <code>No Data</code> panels. Alert rules evaluate; silences removed.</li>
+<li><strong>ELK/Kibana:</strong> confirm log ingest resumed from all nodes. Validate that <strong>all node hostnames</strong> appear post-upgrade — a missing node means the forwarder DaemonSet failed to schedule there.</li>
+<li>Confirm <code>kube-state-metrics</code> / <code>node-exporter</code> targets are all <code>UP</code> (node rotation changes instance labels — expect new series, not missing ones).</li>
+</ul>
+<h3 id="95-soak-period" class="anchored"><a class="anchor" href="#95-soak-period" aria-label="Link to this section">#</a>9.5 Soak Period</h3>
+<p><strong>Soak for a minimum of 24 hours (48h preferred) after Hop 1 before starting Hop 2.</strong> Monitor:</p>
+<ul>
+<li>Error rates / 5xx at CloudFront and nginx</li>
+<li>Pod restart counts</li>
+<li>HPA scaling behaviour over a full daily traffic cycle</li>
+<li>Node stability (no unexpected <code>NotReady</code>, no OOM)</li>
+<li>Nightly/batch jobs and CronJobs completing successfully</li>
+</ul>
+<blockquote class="callout note"><p>CronJobs are a common blind spot — a job that only runs at 02:00 will not be validated by a same-day soak. Confirm at least one full cycle of every scheduled workload before declaring the hop successful.</p>
+</blockquote>
+<hr>
+<h2 id="10-rollback-contingency" class="anchored"><a class="anchor" href="#10-rollback-contingency" aria-label="Link to this section">#</a>10. Rollback &amp; Contingency</h2>
+<h3 id="101-rollback-capability-by-layer" class="anchored"><a class="anchor" href="#101-rollback-capability-by-layer" aria-label="Link to this section">#</a>10.1 Rollback Capability by Layer</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Layer</th>
+<th>Rollback possible?</th>
+<th>Method</th>
+</tr>
+</thead><tbody><tr>
+<td><strong>Control plane</strong></td>
+<td><span class="pill no">No</span></td>
+<td>EKS does not support version downgrade. Roll forward or rebuild.</td>
+</tr>
+<tr>
+<td><strong>Managed node group</strong></td>
+<td><span class="pill ok">Yes</span></td>
+<td>Re-run <code>update-nodegroup-version</code> targeting the previous AMI release version (valid while within the 3-minor kubelet skew).</td>
+</tr>
+<tr>
+<td><strong>EKS add-ons</strong></td>
+<td><span class="pill ok">Yes</span></td>
+<td><code>update-addon</code> to the prior <code>--addon-version</code>.</td>
+</tr>
+<tr>
+<td><strong>Workloads / Helm</strong></td>
+<td><span class="pill ok">Yes</span></td>
+<td><strong>45 microservices:</strong> Git revert → Argo CD sync (<code>argocd app rollback</code>). <strong>nginx:</strong> <code>helm rollback &lt;release&gt; &lt;rev&gt; -n $NS</code> — manual, and only as good as the release history retained in-cluster.</td>
+</tr>
+<tr>
+<td><strong>Persistent data</strong></td>
+<td><span class="pill ok">Yes</span></td>
+<td>Velero restore / EBS snapshot restore.</td>
+</tr>
+</tbody></table></div>
+<h3 id="102-decision-tree" class="anchored"><a class="anchor" href="#102-decision-tree" aria-label="Link to this section">#</a>10.2 Decision Tree</h3>
+<div class="codeblock" data-lang="text"><button class="copy" type="button">Copy</button><pre><code>Failure during Step 2 (control plane)?
+  └─ AWS rolls back automatically on failure; cluster stays at prior version.
+     → Investigate `describe-update` errors. Re-attempt after remediation.
+
+Failure AFTER control plane succeeded?
+  ├─ Node group rotation failing?
+  │     → Roll node group back to prior AMI release version. Cluster runs
+  │       new control plane + old nodes (valid skew). Remediate, retry.
+  ├─ Workload broken (deprecated API / incompatible controller)?
+  │     → Fix forward in Git. Argo CD sync. This is the normal path.
+  ├─ Add-on broken?
+  │     → update-addon to prior version. Remediate, retry.
+  └─ Ingress down (NLB changed / ImagePullBackOff)?
+        → SEV-1. See 10.4.</code></pre></div>
+<h3 id="103-catastrophic-contingency-control-plane-healthy-but-cluster-unusable" class="anchored"><a class="anchor" href="#103-catastrophic-contingency-control-plane-healthy-but-cluster-unusable" aria-label="Link to this section">#</a>10.3 Catastrophic Contingency (control plane healthy but cluster unusable)</h3>
+<p>Last-resort path — expensive, slow (hours), and should never be needed in non-prod, but must be documented because R-01 has no in-place remedy:</p>
+<ol>
+<li>Provision a <strong>new</strong> EKS cluster at the last-known-good version via IaC.</li>
+<li>Register it with Argo CD; sync all 45 apps from Git.</li>
+<li>Velero-restore cluster-only state (secrets, PVs).</li>
+<li>Validate the new NLB provisioned by the nginx release.</li>
+<li><strong>Update the CloudFront origin</strong> to the new NLB DNS name; wait for distribution deployment.</li>
+<li>Validate end-to-end, then decommission the broken cluster.</li>
+</ol>
+<blockquote class="callout note"><p>Step 5 is the long pole — CloudFront distribution updates take time to propagate. Factor this into any RTO commitment.</p>
+</blockquote>
+<h3 id="104-ingress-down-emergency-r-03-r-04-r-14" class="anchored"><a class="anchor" href="#104-ingress-down-emergency-r-03-r-04-r-14" aria-label="Link to this section">#</a>10.4 Ingress-Down Emergency (R-03 / R-04 / R-14)</h3>
+<blockquote class="callout warn"><div class="callout-label">Warning</div><p> nginx is <strong>not</strong> reconciled by Argo CD. Nothing will fix it automatically — every step
+below is manual, and depends entirely on the §5.7 artifacts having been captured beforehand.</p>
+</blockquote>
+<ol>
+<li>Confirm scope: is the NLB DNS changed, or are nginx pods failing to start?</li>
+<li><strong>If NLB DNS changed:</strong> update the CloudFront origin to the current NLB DNS immediately — this restores service fastest. Then investigate why the Service was recreated and restore the original.</li>
+<li><strong>If <code>ImagePullBackOff</code>:</strong> patch the Deployment directly to the pre-mirrored ECR image reference for immediate relief:<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>kubectl set image deploy/&lt;nginx-deploy&gt; -n $NS \
+  nginx=&lt;acct&gt;.dkr.ecr.us-east-2.amazonaws.com/nginx@sha256:&lt;digest&gt;</code></pre></div>
+Then reconcile the Helm release to match, so the next <code>helm upgrade</code> does not revert it:<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>helm upgrade &lt;release&gt; ./vendor/nginx-&lt;ver&gt;.tgz -n $NS -f nginx-values.yaml \
+  --set image.registry=&lt;acct&gt;.dkr.ecr.us-east-2.amazonaws.com</code></pre></div>
+</li>
+<li><strong>If the release itself is broken:</strong> <code>helm rollback &lt;release&gt; &lt;last-good-rev&gt; -n $NS</code>, then verify the NLB DNS is still unchanged.</li>
+<li><strong>If the release is gone entirely:</strong> reinstall from the vendored chart + captured values — this is precisely the scenario §5.7 exists for:<div class="codeblock" data-lang="bash"><button class="copy" type="button">Copy</button><pre><code>helm upgrade --install &lt;release&gt; ./vendor/nginx-&lt;ver&gt;.tgz -n $NS -f nginx-values.yaml</code></pre></div>
+Expect a <strong>new NLB</strong>; update the CloudFront origin accordingly.</li>
+<li>Do not continue the upgrade until ingress is green and stable.</li>
+</ol>
+<blockquote class="callout tip"><div class="callout-label">Tip</div><p> A <code>kubectl set image</code> patch gives the fastest recovery, but Helm does not know about it.
+The next <code>helm upgrade</code> will silently revert to the broken image. Always follow step 3&#39;s
+patch with the matching Helm reconcile.</p>
+</blockquote>
+<hr>
+<h2 id="11-timeline-resourcing" class="anchored"><a class="anchor" href="#11-timeline-resourcing" aria-label="Link to this section">#</a>11. Timeline &amp; Resourcing</h2>
+<h3 id="111-indicative-schedule" class="anchored"><a class="anchor" href="#111-indicative-schedule" aria-label="Link to this section">#</a>11.1 Indicative Schedule</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>When</th>
+<th>Activity</th>
+<th>Duration</th>
+</tr>
+</thead><tbody><tr>
+<td>T−14d</td>
+<td>Phase 1 — Discovery &amp; assessment</td>
+<td>3 days</td>
+</tr>
+<tr>
+<td>T−10d</td>
+<td>Phase 2 — Remediation (API fixes, image mirror, Argo CD upgrade, PDB/replica hardening)</td>
+<td>5 days</td>
+</tr>
+<tr>
+<td>T−7d</td>
+<td>Phase 3 — Rehearsal on disposable clone</td>
+<td>1 day</td>
+</tr>
+<tr>
+<td>T−3d</td>
+<td>Final re-scan, backups, go/no-go review</td>
+<td>1 day</td>
+</tr>
+<tr>
+<td><strong>T+0</strong></td>
+<td><strong>Hop 1: 1.34 → 1.35</strong></td>
+<td><strong>3–5 hrs</strong></td>
+</tr>
+<tr>
+<td>T+1d → T+2d</td>
+<td>Soak, validation, learnings capture</td>
+<td>24–48 hrs</td>
+</tr>
+<tr>
+<td><strong>T+3d</strong></td>
+<td><strong>Hop 2: 1.35 → 1.36</strong></td>
+<td><strong>3–5 hrs</strong></td>
+</tr>
+<tr>
+<td>T+4d → T+5d</td>
+<td>Soak, final validation</td>
+<td>24–48 hrs</td>
+</tr>
+<tr>
+<td>T+6d</td>
+<td>Closure, prod runbook update, prod change raised</td>
+<td>1 day</td>
+</tr>
+</tbody></table></div>
+<h3 id="112-per-hop-window-breakdown" class="anchored"><a class="anchor" href="#112-per-hop-window-breakdown" aria-label="Link to this section">#</a>11.2 Per-Hop Window Breakdown</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Step</th>
+<th>Activity</th>
+<th>Est.</th>
+</tr>
+</thead><tbody><tr>
+<td>1</td>
+<td>Freeze &amp; baseline</td>
+<td>20 min</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Control plane upgrade</td>
+<td>25–45 min</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Core add-ons</td>
+<td>15–25 min</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Node group rotation</td>
+<td>10–20 min <strong>per node</strong></td>
+</tr>
+<tr>
+<td>5</td>
+<td>Unfreeze &amp; reconcile Argo CD</td>
+<td>20 min</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Validation (Section 9)</td>
+<td>45–60 min</td>
+</tr>
+<tr>
+<td></td>
+<td><strong>Contingency buffer</strong></td>
+<td><strong>+50%</strong></td>
+</tr>
+</tbody></table></div>
+<blockquote class="callout note"><p>Step 4 dominates and scales linearly with node count at <code>maxUnavailable=1</code>. <strong>Count your nodes and multiply</strong> — a 12-node cluster implies 2–4 hours for rotation alone. Size the change window from the real node count, not from this table.</p>
+</blockquote>
+<h3 id="113-roles" class="anchored"><a class="anchor" href="#113-roles" aria-label="Link to this section">#</a>11.3 Roles</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Role</th>
+<th>Responsibility</th>
+</tr>
+</thead><tbody><tr>
+<td><strong>Change Owner / Cloud Architect</strong></td>
+<td>Owns the plan, chairs go/no-go, authorises point-of-no-return</td>
+</tr>
+<tr>
+<td><strong>Platform Engineer (primary)</strong></td>
+<td>Executes AWS CLI steps 2–4</td>
+</tr>
+<tr>
+<td><strong>Platform Engineer (secondary)</strong></td>
+<td>Independent verifier; monitors dashboards; holds the rollback decision</td>
+</tr>
+<tr>
+<td><strong>GitOps Owner</strong></td>
+<td>Argo CD freeze/unfreeze, app reconciliation (45 microservices)</td>
+</tr>
+<tr>
+<td><strong>nginx Release Owner</strong></td>
+<td>Sole holder of the hand-managed nginx Helm release. Enforces the manual freeze; performs any emergency <code>helm rollback</code>/reinstall. <strong>Must be on call for the whole window.</strong></td>
+</tr>
+<tr>
+<td><strong>SRE / Observability</strong></td>
+<td>Synthetic monitoring, AMP/AMG/ELK validation, silences</td>
+</tr>
+<tr>
+<td><strong>Network Engineer (on call)</strong></td>
+<td>NLB / CloudFront / WAF issues</td>
+</tr>
+<tr>
+<td><strong>App Team Reps</strong></td>
+<td>Business smoke tests, service-level sign-off</td>
+</tr>
+</tbody></table></div>
+<h3 id="114-communications" class="anchored"><a class="anchor" href="#114-communications" aria-label="Link to this section">#</a>11.4 Communications</h3>
+<ul>
+<li>Dedicated incident channel for the window; all commands and outputs pasted in.</li>
+<li>Status at each checkpoint: Step 1 complete / Step 2 complete / etc.</li>
+<li>Explicit broadcast at the <strong>point of no return</strong> (before Step 2).</li>
+<li>Explicit broadcast at the <strong>start of Step 4</strong> (user impact begins here).</li>
+<li>Closure notice with validation evidence attached.</li>
+</ul>
+<hr>
+<h2 id="12-post-upgrade-activities" class="anchored"><a class="anchor" href="#12-post-upgrade-activities" aria-label="Link to this section">#</a>12. Post-Upgrade Activities</h2>
+<div class="tablewrap"><table><thead><tr>
+<th>#</th>
+<th>Task</th>
+<th>Owner</th>
+</tr>
+</thead><tbody><tr>
+<td>12.1</td>
+<td>Confirm <code>aws eks describe-cluster</code> reports 1.36, all nodes on matching kubelet</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td>12.2</td>
+<td>Re-run Cluster Insights — confirm clean at the new version</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td>12.3</td>
+<td>Update IaC (Terraform/CloudFormation/eksctl) to pin 1.36 + new add-on versions, so nothing drifts back</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td>12.4</td>
+<td>Update Git manifests / Helm values with any changes made during the window</td>
+<td>GitOps Owner</td>
+</tr>
+<tr>
+<td>12.4b</td>
+<td><strong>Onboard nginx into Argo CD</strong> so the ingress tier stops being hand-managed (see D-7)</td>
+<td>GitOps Owner</td>
+</tr>
+<tr>
+<td>12.5</td>
+<td>Confirm cluster is on <strong>standard support</strong> for 1.36 (avoid extended-support charges)</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td>12.6</td>
+<td>Refresh AMG dashboards/alerts for any changed metric labels</td>
+<td>SRE</td>
+</tr>
+<tr>
+<td>12.7</td>
+<td>Re-baseline capacity and cost (Bottlerocket AMI change may shift resource profile)</td>
+<td>Platform</td>
+</tr>
+<tr>
+<td>12.8</td>
+<td><strong>Learnings Log</strong> — record every deviation, timing, and failure encountered</td>
+<td>Change Owner</td>
+</tr>
+<tr>
+<td>12.9</td>
+<td>Update the <strong>production</strong> runbook with Learnings Log findings</td>
+<td>Cloud Architect</td>
+</tr>
+<tr>
+<td>12.10</td>
+<td>Raise the production change request with calibrated timings</td>
+<td>Change Owner</td>
+</tr>
+<tr>
+<td>12.11</td>
+<td>Schedule the next upgrade (1.37) to maintain the latest−1 posture</td>
+<td>Platform</td>
+</tr>
+</tbody></table></div>
+<h3 id="121-learnings-log-template" class="anchored"><a class="anchor" href="#121-learnings-log-template" aria-label="Link to this section">#</a>12.1 Learnings Log Template</h3>
+<div class="tablewrap"><table><thead><tr>
+<th>Step</th>
+<th>Planned</th>
+<th>Actual</th>
+<th>Deviation</th>
+<th>Action for Prod</th>
+</tr>
+</thead><tbody><tr>
+<td>Control plane (hop 1)</td>
+<td>35 min</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Node rotation (hop 1)</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>PDB blockers hit</td>
+<td>0</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Image pull failures</td>
+<td>0</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Apps requiring manual intervention</td>
+<td>0</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>nginx release revision changed?</td>
+<td>No</td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Total window</td>
+<td></td>
+<td></td>
+<td></td>
+<td></td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="13-key-decisions-requiring-sign-off" class="anchored"><a class="anchor" href="#13-key-decisions-requiring-sign-off" aria-label="Link to this section">#</a>13. Key Decisions Requiring Sign-Off</h2>
+<div class="tablewrap"><table><thead><tr>
+<th>#</th>
+<th>Decision</th>
+<th>Recommendation</th>
+</tr>
+</thead><tbody><tr>
+<td>D-1</td>
+<td>Two separate change windows (one per hop) vs a single combined window</td>
+<td><strong>Two separate windows with a soak between.</strong> A combined window doubles the blast radius with no rollback, and makes attribution of any regression impossible.</td>
+</tr>
+<tr>
+<td>D-2</td>
+<td>Perform the rehearsal (Phase 3)?</td>
+<td><strong>Yes.</strong> Given R-01 (no rollback), the cost of a disposable cluster is trivial against the cost of an unrecoverable non-prod cluster.</td>
+</tr>
+<tr>
+<td>D-3</td>
+<td>Mirror Bitnami nginx image to ECR</td>
+<td><strong>Yes, unconditionally, as a prior change.</strong> Even if the pull works today, relying on a public registry for a tag this old is an unacceptable single point of failure during node replacement.</td>
+</tr>
+<tr>
+<td>D-4</td>
+<td><code>maxUnavailable</code> for node rotation</td>
+<td><strong>1.</strong> Non-prod tempts you to go faster; resist it — the purpose of this run is to produce a trustworthy rehearsal of the production procedure.</td>
+</tr>
+<tr>
+<td>D-5</td>
+<td>Upgrade nginx chart from <code>1.21.3</code> to a current, supported release</td>
+<td><strong>Yes — but as a separate change after the upgrade completes.</strong> nginx 1.21.x is long out of support. Never combine an ingress change with a cluster upgrade.</td>
+</tr>
+<tr>
+<td>D-6</td>
+<td>Migrate <code>aws-auth</code> ConfigMap → EKS Access Entries (if still on ConfigMap)</td>
+<td>Recommended, but <strong>after</strong> the upgrade as a separate change.</td>
+</tr>
+<tr>
+<td>D-7</td>
+<td><strong>Onboard nginx into Argo CD</strong> (Helm-type <code>Application</code> or <code>kustomize</code>+<code>helmCharts</code>, pointing at the vendored chart and <code>nginx-values.yaml</code>)</td>
+<td><strong>Yes — schedule immediately after the upgrade.</strong> Hand-managed ingress is the weakest link in this platform: highest blast radius, lowest recoverability, no drift detection, and a single person holding undocumented state. The §5.7 capture produces exactly the artifacts needed to onboard it. Do it <em>after</em> the upgrade so the two changes stay independent.</td>
+</tr>
+</tbody></table></div>
+<hr>
+<h2 id="14-references-to-consult-at-execution-time" class="anchored"><a class="anchor" href="#14-references-to-consult-at-execution-time" aria-label="Link to this section">#</a>14. References to Consult at Execution Time</h2>
+<blockquote class="callout note"><p>These must be read fresh during Phase 1 — version-specific details change, and this document deliberately defers to them rather than restating specifics that could become stale or wrong.</p>
+</blockquote>
+<ul>
+<li>Kubernetes <strong>Deprecated API Migration Guide</strong> (for 1.35 and 1.36)</li>
+<li>Kubernetes <strong>CHANGELOG-1.35.md</strong> / <strong>CHANGELOG-1.36.md</strong> — &quot;Urgent Upgrade Notes&quot;</li>
+<li><strong>Amazon EKS Kubernetes versions</strong> release notes (1.35, 1.36)</li>
+<li><strong>Amazon EKS Best Practices Guide</strong> — Cluster Upgrades</li>
+<li><strong>Amazon EKS Cluster Insights</strong> — upgrade readiness</li>
+<li><strong>Bottlerocket OS</strong> release notes for the target <code>aws-k8s-1.35</code> / <code>aws-k8s-1.36</code> variants</li>
+<li><strong>Argo CD</strong> supported Kubernetes versions matrix</li>
+<li><strong>AWS Load Balancer Controller</strong> compatibility matrix (if in use)</li>
+<li><strong>Bitnami / Broadcom</strong> catalog and image-availability announcements (R-04)</li>
+<li><strong>Helm</strong> version support policy and Kubernetes compatibility matrix (R-17)</li>
+</ul>
+<hr>
+<p><strong>Document version:</strong> 1.1 — revised: nginx confirmed as a hand-managed Helm release outside Argo CD (adds R-14…R-17, §5.7, G-4b/G-4c, D-7)
+<strong>Last updated:</strong> 2026-10-30</p>
+
+
+      <footer class="site">
+        Generated 2026-10-30 &middot; Source: <a href="EKS-Upgrade-Implementation-Plan-kwg-nonprod.md">EKS-Upgrade-Implementation-Plan-kwg-nonprod.md</a><br>
+        Version-specific details for Kubernetes 1.35 / 1.36 must be verified against official
+        release notes at execution time &mdash; see &sect;5.2 and &sect;14.
+      </footer>
+    </div>
+  </main>
+</div>
+
+<div class="gatebar" id="gatebar">
+  <span>Go/No-Go gates: <b id="gateCount">0</b> / <span id="gateTotal">0</span></span>
+  <button type="button" id="gateReset">Reset</button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var root = document.documentElement;
+  var LS = { theme: 'eksplan.theme', gates: 'eksplan.gates.v2' };
+
+  /* ---- theme ---- */
+  try {
+    var saved = localStorage.getItem(LS.theme);
+    if (saved) root.setAttribute('data-theme', saved);
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      root.setAttribute('data-theme', 'dark');
+  } catch (e) {}
+
+  document.getElementById('themeBtn').addEventListener('click', function () {
+    var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem(LS.theme, next); } catch (e) {}
+  });
+
+  document.getElementById('printBtn').addEventListener('click', function () { window.print(); });
+
+  /* ---- mobile nav ---- */
+  var sidebar = document.getElementById('sidebar');
+  var scrim = document.getElementById('scrim');
+  function closeNav() { sidebar.classList.remove('open'); scrim.classList.remove('show'); }
+  document.getElementById('navToggle').addEventListener('click', function () {
+    sidebar.classList.toggle('open'); scrim.classList.toggle('show');
+  });
+  scrim.addEventListener('click', closeNav);
+
+  /* ---- copy buttons ---- */
+  document.querySelectorAll('.codeblock .copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var code = btn.parentNode.querySelector('code');
+      var text = code.innerText;
+      var done = function () {
+        btn.textContent = 'Copied'; btn.classList.add('done');
+        setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    });
+  });
+
+  /* ---- TOC filter ---- */
+  var search = document.getElementById('search');
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc-link'));
+  search.addEventListener('input', function () {
+    var q = search.value.trim().toLowerCase();
+    links.forEach(function (a) {
+      a.classList.toggle('hidden', q !== '' && a.textContent.toLowerCase().indexOf(q) === -1);
+    });
+  });
+  links.forEach(function (a) {
+    a.addEventListener('click', function () { if (window.innerWidth <= 900) closeNav(); });
+  });
+
+  /* ---- scrollspy ---- */
+  var byId = {};
+  links.forEach(function (a) { byId[a.getAttribute('data-target')] = a; });
+  var heads = Array.prototype.slice.call(document.querySelectorAll('.content h2[id], .content h3[id]'));
+  var current = null;
+  function setActive(id) {
+    if (id === current) return;
+    if (current && byId[current]) byId[current].classList.remove('active');
+    current = id;
+    if (byId[id]) {
+      byId[id].classList.add('active');
+      var a = byId[id], sb = sidebar;
+      if (a.offsetTop < sb.scrollTop || a.offsetTop > sb.scrollTop + sb.clientHeight - 60) {
+        sb.scrollTop = a.offsetTop - sb.clientHeight / 2;
+      }
+    }
+  }
+  function onScroll() {
+    var top = window.scrollY + parseInt(getComputedStyle(root).getPropertyValue('--topbar-h')) + 30;
+    var found = heads.length ? heads[0].id : null;
+    for (var i = 0; i < heads.length; i++) { if (heads[i].offsetTop <= top) found = heads[i].id; else break; }
+    if (found) setActive(found);
+    var h = document.body.scrollHeight - window.innerHeight;
+    document.getElementById('progress').style.width = (h > 0 ? (window.scrollY / h) * 100 : 0) + '%';
+  }
+  var ticking = false;
+  window.addEventListener('scroll', function () {
+    if (!ticking) { ticking = true; window.requestAnimationFrame(function () { onScroll(); ticking = false; }); }
+  }, { passive: true });
+  window.addEventListener('resize', onScroll);
+  onScroll();
+
+  /* ---- persisted go/no-go gates ---- */
+  var boxes = Array.prototype.slice.call(document.querySelectorAll('.gate-check'));
+  if (boxes.length) {
+    var bar = document.getElementById('gatebar');
+    var countEl = document.getElementById('gateCount');
+    document.getElementById('gateTotal').textContent = boxes.length;
+    bar.classList.add('show');
+
+    var state = {};
+    try { state = JSON.parse(localStorage.getItem(LS.gates) || '{}'); } catch (e) { state = {}; }
+
+    // Key each gate by its row label (G-1, G-4b, ...) rather than by index, so that
+    // inserting or reordering gates does not misalign previously saved progress.
+    function keyFor(box, i) {
+      var row = box.closest ? box.closest('tr') : null;
+      var label = row && row.cells && row.cells[0] ? row.cells[0].textContent.trim() : '';
+      return label || ('idx' + i);
+    }
+
+    function save() {
+      try { localStorage.setItem(LS.gates, JSON.stringify(state)); } catch (e) {}
+      countEl.textContent = boxes.filter(function (b) { return b.checked; }).length;
+    }
+    boxes.forEach(function (b, i) {
+      b.dataset.k = keyFor(b, i);
+      b.checked = !!state[b.dataset.k];
+      b.addEventListener('change', function () { state[b.dataset.k] = b.checked; save(); });
+    });
+    document.getElementById('gateReset').addEventListener('click', function () {
+      boxes.forEach(function (b) { b.checked = false; state[b.dataset.k] = false; });
+      save();
+    });
+    save();
+  }
+})();
+</script>
+</body>
+</html>
